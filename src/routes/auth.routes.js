@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -68,10 +69,18 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+router.get('/me', requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.mechanicId } });
+    if (!user) return res.status(401).json({ error: 'User not found' });
+    res.json(toPublicUser(user));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // TODO: POST /forgot-password — generate a reset token, email it (needs a
 // transactional email provider — not decided yet).
 // TODO: POST /reset-password — verify the reset token, update passwordHash.
-// TODO: GET /me — requireAuth, return the current user (replaces
-// base44.auth.me() used by WorkOrderForm to prefill technician_name).
 
 export default router;
