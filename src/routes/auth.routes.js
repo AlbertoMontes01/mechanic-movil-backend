@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomBytes, createHash } from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -79,8 +80,68 @@ router.get('/me', requireAuth, async (req, res, next) => {
   }
 });
 
-// TODO: POST /forgot-password — generate a reset token, email it (needs a
-// transactional email provider — not decided yet).
-// TODO: POST /reset-password — verify the reset token, update passwordHash.
+function hashResetToken(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+// No transactional email provider is chosen yet, so this logs the reset
+// link to the server console instead of sending an email — functionally
+// complete for local dev/testing, clearly not production-ready.
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = z.object({ email: z.string().email() }).parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    // Always respond the same way whether or not the account exists, so
+    // this endpoint can't be used to enumerate registered emails.
+    if (user) {
+      const token = randomBytes(32).toString('hex');
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          resetTokenHash: hashResetToken(token),
+          resetTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+      const resetUrl = `${process.env.CORS_ORIGIN || 'http://localhost:5173'}/reset-password?token=${token}`;
+      // eslint-disable-next-line no-console
+      console.log(`\n[password reset] ${email} -> ${resetUrl}\n`);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid email' });
+    next(err);
+  }
+});
+
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { resetToken, newPassword } = z
+      .object({ resetToken: z.string().min(1), newPassword: z.string().min(8) })
+      .parse(req.body);
+
+    const user = await prisma.user.findFirst({
+      where: {
+        resetTokenHash: hashResetToken(resetToken),
+        resetTokenExpiresAt: { gt: new Date() },
+      },
+    });
+    if (!user) {
+      return res.status(400).json({ error: 'This reset link is invalid or has expired' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash, resetTokenHash: null, resetTokenExpiresAt: null },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid request' });
+    next(err);
+  }
+});
 
 export default router;

@@ -19,6 +19,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Password reset: store only a hash of the token (never the plaintext),
+  // plus an expiry. A matching, unexpired hash is what reset-password checks.
+  resetTokenHash      String?
+  resetTokenExpiresAt DateTime?
+
   clients            Client[]
   inventoryItems     InventoryItem[]
   inventoryCategories InventoryCategory[]
