@@ -6,6 +6,7 @@ import { randomBytes, createHash } from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { stripHtml } from '../lib/sanitize.js';
 
 const router = Router();
 
@@ -91,7 +92,7 @@ router.post('/register', authLimiter, async (req, res, next) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { email, passwordHash, name },
+      data: { email, passwordHash, name: stripHtml(name) },
     });
 
     const token = await issueTokenPair(res, user);
