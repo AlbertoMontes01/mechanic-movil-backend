@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeVehicle } from '../lib/serialize.js';
+import { stripHtml, sanitizeStrings } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -78,7 +79,7 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const data = vehicleSchema.parse(req.body);
+    const data = sanitizeStrings(vehicleSchema.parse(req.body));
     if (!(await assertClientOwned(data.client_id, req.mechanicId))) {
       return res.status(404).json({ error: 'Client not found' });
     }
@@ -100,8 +101,8 @@ router.post('/', async (req, res, next) => {
         commonParts: data.common_parts?.length
           ? {
               create: data.common_parts.map((p, i) => ({
-                name: p.name || '',
-                value: p.value || null,
+                name: stripHtml(p.name) || '',
+                value: stripHtml(p.value) || null,
                 inventoryItemId: p.inventory_item_id || null,
                 position: i,
               })),
@@ -119,7 +120,7 @@ router.post('/', async (req, res, next) => {
 
 router.patch('/:id', async (req, res, next) => {
   try {
-    const data = vehicleSchema.partial({ client_id: true, make: true, model: true }).parse(req.body);
+    const data = sanitizeStrings(vehicleSchema.partial({ client_id: true, make: true, model: true }).parse(req.body));
 
     const existing = await prisma.vehicle.findFirst({
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
@@ -150,8 +151,8 @@ router.patch('/:id', async (req, res, next) => {
           ...(data.common_parts && {
             commonParts: {
               create: data.common_parts.map((p, i) => ({
-                name: p.name || '',
-                value: p.value || null,
+                name: stripHtml(p.name) || '',
+                value: stripHtml(p.value) || null,
                 inventoryItemId: p.inventory_item_id || null,
                 position: i,
               })),

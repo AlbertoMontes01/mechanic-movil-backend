@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeInventoryCategory, serializeInventoryItem } from '../lib/serialize.js';
+import { sanitizeStrings } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -42,7 +43,7 @@ router.get('/items', async (req, res, next) => {
 
 router.post('/items', async (req, res, next) => {
   try {
-    const data = itemSchema.parse(req.body);
+    const data = sanitizeStrings(itemSchema.parse(req.body));
     const categoryId = await resolveCategoryId(data.category, req.mechanicId);
 
     const item = await prisma.inventoryItem.create({
@@ -65,7 +66,7 @@ router.post('/items', async (req, res, next) => {
 
 router.patch('/items/:id', async (req, res, next) => {
   try {
-    const data = itemSchema.partial().parse(req.body);
+    const data = sanitizeStrings(itemSchema.partial().parse(req.body));
     const existing = await prisma.inventoryItem.findFirst({
       where: { id: req.params.id, mechanicId: req.mechanicId },
     });
@@ -106,7 +107,7 @@ router.get('/categories', async (req, res, next) => {
 
 router.post('/categories', async (req, res, next) => {
   try {
-    const data = categorySchema.parse(req.body);
+    const data = sanitizeStrings(categorySchema.parse(req.body));
     const category = await prisma.inventoryCategory.create({
       data: { mechanicId: req.mechanicId, name: data.name },
     });

@@ -28,8 +28,25 @@ model User {
   inventoryItems     InventoryItem[]
   inventoryCategories InventoryCategory[]
   shopSettings       ShopSettings?
+  refreshTokens      RefreshToken[]
 
   @@map("users")
+}
+
+// Access tokens are short-lived (15m) and never stored server-side; a
+// refresh token is what actually gets persisted (hashed, like the password
+// reset token) so it can be looked up, rotated on each use, and revoked
+// individually (e.g. on logout) without invalidating every other session.
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
 }
 
 model Client {

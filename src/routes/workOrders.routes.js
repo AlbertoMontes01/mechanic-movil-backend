@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeWorkOrder, workOrderStatusFromWire } from '../lib/serialize.js';
+import { stripHtml } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -98,14 +99,14 @@ router.post('/', async (req, res, next) => {
       data: {
         clientId: data.client_id,
         vehicleId: data.vehicle_id,
-        technicianName: data.technician_name || null,
+        technicianName: stripHtml(data.technician_name) || null,
         status: data.status ? workOrderStatusFromWire(data.status) : undefined,
         date: data.date ? new Date(data.date) : null,
-        generalNotes: data.general_notes || null,
+        generalNotes: stripHtml(data.general_notes) || null,
         subjects: {
           create: subjects.map((s, i) => ({
-            description: s.description || null,
-            note: s.note || null,
+            description: stripHtml(s.description) || null,
+            note: stripHtml(s.note) || null,
             position: i,
             partsUsed: {
               create: (s.parts_used || []).map((p) => ({
@@ -146,15 +147,15 @@ router.patch('/:id', async (req, res, next) => {
       return tx.workOrder.update({
         where: { id: existing.id },
         data: {
-          ...(data.technician_name !== undefined && { technicianName: data.technician_name || null }),
+          ...(data.technician_name !== undefined && { technicianName: stripHtml(data.technician_name) || null }),
           ...(data.status !== undefined && { status: workOrderStatusFromWire(data.status) }),
           ...(data.date !== undefined && { date: data.date ? new Date(data.date) : null }),
-          ...(data.general_notes !== undefined && { generalNotes: data.general_notes || null }),
+          ...(data.general_notes !== undefined && { generalNotes: stripHtml(data.general_notes) || null }),
           ...(data.subjects && {
             subjects: {
               create: data.subjects.map((s, i) => ({
-                description: s.description || null,
-                note: s.note || null,
+                description: stripHtml(s.description) || null,
+                note: stripHtml(s.note) || null,
                 position: i,
                 partsUsed: {
                   create: (s.parts_used || []).map((p) => ({

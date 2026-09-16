@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeInvoice } from '../lib/serialize.js';
+import { stripHtml } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -32,7 +33,7 @@ const include = { lines: true };
 function computeLine(l) {
   const quantity = l.quantity ?? 1;
   const unitPrice = l.unit_price ?? 0;
-  return { description: l.description || null, quantity, unitPrice, total: quantity * unitPrice };
+  return { description: stripHtml(l.description) || null, quantity, unitPrice, total: quantity * unitPrice };
 }
 
 router.get('/', async (req, res, next) => {
@@ -89,7 +90,7 @@ router.post('/', async (req, res, next) => {
           workOrderId: data.work_order_id || null,
           clientId: data.client_id,
           vehicleId: data.vehicle_id,
-          invoiceNumber: data.invoice_number || null,
+          invoiceNumber: stripHtml(data.invoice_number) || null,
           date: data.date ? new Date(data.date) : null,
           status: data.status || 'pending',
           subtotal,
@@ -143,7 +144,7 @@ router.patch('/:id', async (req, res, next) => {
       return tx.invoice.update({
         where: { id: existing.id },
         data: {
-          ...(data.invoice_number !== undefined && { invoiceNumber: data.invoice_number || null }),
+          ...(data.invoice_number !== undefined && { invoiceNumber: stripHtml(data.invoice_number) || null }),
           ...(data.date !== undefined && { date: data.date ? new Date(data.date) : null }),
           ...(data.status !== undefined && { status: data.status }),
           ...(subtotal !== undefined && { subtotal, tax, total }),

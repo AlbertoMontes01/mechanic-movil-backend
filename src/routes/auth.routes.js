@@ -21,16 +21,59 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts. Please try again later.' },
 });
 
+// At least 8 characters with a letter and a number — a floor, not a full
+// strength meter. Register and reset-password both use this.
+const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .regex(/[A-Za-z]/, 'Password must contain at least one letter')
+  .regex(/[0-9]/, 'Password must contain at least one number');
+
 const credentialsSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: passwordSchema,
   name: z.string().optional(),
 });
 
-function issueToken(user) {
-  return jwt.sign({ sub: user.id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+const ACCESS_TOKEN_EXPIRES_IN = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
+const REFRESH_TOKEN_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
+const REFRESH_COOKIE_NAME = 'refresh_token';
+const REFRESH_COOKIE_OPTS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  path: '/api/auth',
+  maxAge: REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
+};
+
+function issueAccessToken(user) {
+  return jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRES_IN });
+}
+
+function hashToken(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+// Refresh tokens are opaque random values, not JWTs — only their sha256
+// hash is ever stored, the same pattern as the password-reset token, so a
+// single row can be looked up, rotated on every use, and revoked
+// individually (logout) without invalidating a user's other sessions.
+async function issueRefreshToken(userId) {
+  const token = randomBytes(32).toString('hex');
+  await prisma.refreshToken.create({
+    data: {
+      userId,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000),
+    },
   });
+  return token;
+}
+
+async function issueTokenPair(res, user) {
+  const refreshToken = await issueRefreshToken(user.id);
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTS);
+  return issueAccessToken(user);
 }
 
 function toPublicUser(user) {
@@ -51,10 +94,11 @@ router.post('/register', authLimiter, async (req, res, next) => {
       data: { email, passwordHash, name },
     });
 
-    res.status(201).json({ user: toPublicUser(user), token: issueToken(user) });
+    const token = await issueTokenPair(res, user);
+    res.status(201).json({ user: toPublicUser(user), token });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid email or password', details: err.issues });
+      return res.status(400).json({ error: err.issues?.[0]?.message || 'Invalid email or password', details: err.issues });
     }
     next(err);
   }
@@ -62,7 +106,7 @@ router.post('/register', authLimiter, async (req, res, next) => {
 
 router.post('/login', authLimiter, async (req, res, next) => {
   try {
-    const { email, password } = credentialsSchema.pick({ email: true, password: true }).parse(req.body);
+    const { email, password } = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
@@ -74,11 +118,54 @@ router.post('/login', authLimiter, async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    res.json({ user: toPublicUser(user), token: issueToken(user) });
+    const token = await issueTokenPair(res, user);
+    res.json({ user: toPublicUser(user), token });
   } catch (err) {
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: 'Invalid email or password' });
     }
+    next(err);
+  }
+});
+
+// Exchanges the httpOnly refresh cookie for a new short-lived access token,
+// rotating the refresh token itself on every use (old one deleted, new one
+// issued) so a stolen refresh cookie has a one-time replay window, not a
+// standing 30-day one.
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const raw = req.cookies?.[REFRESH_COOKIE_NAME];
+    if (!raw) return res.status(401).json({ error: 'Not authenticated' });
+
+    const existing = await prisma.refreshToken.findUnique({ where: { tokenHash: hashToken(raw) } });
+    if (!existing || existing.expiresAt < new Date()) {
+      res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' });
+      return res.status(401).json({ error: 'Session expired, please log in again' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: existing.userId } });
+    if (!user) {
+      res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' });
+      return res.status(401).json({ error: 'Session expired, please log in again' });
+    }
+
+    await prisma.refreshToken.delete({ where: { id: existing.id } });
+    const token = await issueTokenPair(res, user);
+    res.json({ user: toPublicUser(user), token });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/logout', async (req, res, next) => {
+  try {
+    const raw = req.cookies?.[REFRESH_COOKIE_NAME];
+    if (raw) {
+      await prisma.refreshToken.deleteMany({ where: { tokenHash: hashToken(raw) } });
+    }
+    res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/auth' });
+    res.json({ ok: true });
+  } catch (err) {
     next(err);
   }
 });
@@ -93,13 +180,11 @@ router.get('/me', requireAuth, async (req, res, next) => {
   }
 });
 
-function hashResetToken(token) {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-// No transactional email provider is chosen yet, so this logs the reset
-// link to the server console instead of sending an email — functionally
-// complete for local dev/testing, clearly not production-ready.
+// No transactional email provider is chosen yet. In dev, the reset link is
+// logged to the server console so the flow can be exercised end to end; in
+// production that log is suppressed (it's a sensitive token) which means
+// forgot-password currently has no way to actually reach the user there —
+// this is a known gap until a real email provider is wired up.
 router.post('/forgot-password', authLimiter, async (req, res, next) => {
   try {
     const { email } = z.object({ email: z.string().email() }).parse(req.body);
@@ -112,13 +197,17 @@ router.post('/forgot-password', authLimiter, async (req, res, next) => {
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          resetTokenHash: hashResetToken(token),
+          resetTokenHash: hashToken(token),
           resetTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
         },
       });
-      const resetUrl = `${process.env.CORS_ORIGIN || 'http://localhost:5173'}/reset-password?token=${token}`;
-      // eslint-disable-next-line no-console
-      console.log(`\n[password reset] ${email} -> ${resetUrl}\n`);
+      if (process.env.NODE_ENV !== 'production') {
+        const resetUrl = `${process.env.CORS_ORIGIN || 'http://localhost:5173'}/reset-password?token=${token}`;
+        // eslint-disable-next-line no-console
+        console.log(`\n[password reset — dev only] ${email} -> ${resetUrl}\n`);
+      }
+      // TODO: send resetUrl via a real email provider once one is chosen —
+      // nothing delivers this token to the user outside of dev right now.
     }
 
     res.json({ ok: true });
@@ -131,12 +220,12 @@ router.post('/forgot-password', authLimiter, async (req, res, next) => {
 router.post('/reset-password', authLimiter, async (req, res, next) => {
   try {
     const { resetToken, newPassword } = z
-      .object({ resetToken: z.string().min(1), newPassword: z.string().min(8) })
+      .object({ resetToken: z.string().min(1), newPassword: passwordSchema })
       .parse(req.body);
 
     const user = await prisma.user.findFirst({
       where: {
-        resetTokenHash: hashResetToken(resetToken),
+        resetTokenHash: hashToken(resetToken),
         resetTokenExpiresAt: { gt: new Date() },
       },
     });
@@ -145,14 +234,20 @@ router.post('/reset-password', authLimiter, async (req, res, next) => {
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash, resetTokenHash: null, resetTokenExpiresAt: null },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash, resetTokenHash: null, resetTokenExpiresAt: null },
+      }),
+      // A password reset ends every existing session, not just the one
+      // that requested it — otherwise a stolen still-valid refresh token
+      // would survive the password change.
+      prisma.refreshToken.deleteMany({ where: { userId: user.id } }),
+    ]);
 
     res.json({ ok: true });
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid request' });
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.issues?.[0]?.message || 'Invalid request' });
     next(err);
   }
 });

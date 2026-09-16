@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeClient } from '../lib/serialize.js';
+import { sanitizeStrings } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -43,7 +44,7 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const data = clientSchema.parse(req.body);
+    const data = sanitizeStrings(clientSchema.parse(req.body));
     const client = await prisma.client.create({
       data: { ...data, mechanicId: req.mechanicId },
     });
@@ -56,7 +57,7 @@ router.post('/', async (req, res, next) => {
 
 router.patch('/:id', async (req, res, next) => {
   try {
-    const data = clientSchema.partial().parse(req.body);
+    const data = sanitizeStrings(clientSchema.partial().parse(req.body));
     const existing = await prisma.client.findFirst({
       where: { id: req.params.id, mechanicId: req.mechanicId },
     });

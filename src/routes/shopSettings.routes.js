@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeShopSettings } from '../lib/serialize.js';
+import { stripHtml } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -31,17 +32,17 @@ router.put('/', async (req, res, next) => {
       where: { mechanicId: req.mechanicId },
       create: {
         mechanicId: req.mechanicId,
-        shopName: data.shop_name,
+        shopName: stripHtml(data.shop_name),
         logoUrl: data.logo_url || null,
-        phone: data.phone || null,
-        address: data.address || null,
+        phone: stripHtml(data.phone) || null,
+        address: stripHtml(data.address) || null,
         taxRate: data.tax_rate ?? 0,
       },
       update: {
-        shopName: data.shop_name,
+        shopName: stripHtml(data.shop_name),
         logoUrl: data.logo_url || null,
-        phone: data.phone || null,
-        address: data.address || null,
+        phone: stripHtml(data.phone) || null,
+        address: stripHtml(data.address) || null,
         taxRate: data.tax_rate ?? 0,
       },
     });
