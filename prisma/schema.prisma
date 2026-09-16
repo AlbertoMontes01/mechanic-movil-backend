@@ -157,6 +157,10 @@ model InventoryItem {
   // What the mechanic charges the customer for it -- this, not cost, is
   // what invoice lines are priced from.
   price      Decimal @default(0) @db.Decimal(10, 2)
+  // Whether low-stock alerts (the Inventory list badge, the dashboard's
+  // Low Inventory widget) apply to this part. Off for parts the mechanic
+  // doesn't want to bother tracking exact counts of.
+  trackStock Boolean @default(true)
 
   categoryId String?
   category   InventoryCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)

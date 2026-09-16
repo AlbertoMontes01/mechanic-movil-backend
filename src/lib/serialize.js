@@ -58,6 +58,7 @@ export function serializeInventoryItem(i) {
     stock: i.stock,
     cost: Number(i.cost),
     price: Number(i.price),
+    track_stock: i.trackStock,
     category: i.category?.name ?? null,
     created_date: i.createdAt,
     updated_date: i.updatedAt,

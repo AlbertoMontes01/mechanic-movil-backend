@@ -14,6 +14,7 @@ const itemSchema = z.object({
   stock: z.number().int().optional(),
   cost: z.number().optional(),
   price: z.number().optional(),
+  track_stock: z.boolean().optional(),
   category: z.string().optional().nullable(),
 });
 
@@ -55,6 +56,7 @@ router.post('/items', async (req, res, next) => {
         stock: data.stock ?? 0,
         cost: data.cost ?? 0,
         price: data.price ?? 0,
+        trackStock: data.track_stock ?? true,
         categoryId,
       },
       include: { category: true },
@@ -85,6 +87,7 @@ router.patch('/items/:id', async (req, res, next) => {
         ...(data.stock !== undefined && { stock: data.stock }),
         ...(data.cost !== undefined && { cost: data.cost }),
         ...(data.price !== undefined && { price: data.price }),
+        ...(data.track_stock !== undefined && { trackStock: data.track_stock }),
         ...(categoryId !== undefined && { categoryId }),
       },
       include: { category: true },
