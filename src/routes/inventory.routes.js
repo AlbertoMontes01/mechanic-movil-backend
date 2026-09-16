@@ -13,6 +13,7 @@ const itemSchema = z.object({
   name: z.string().min(1),
   stock: z.number().int().optional(),
   cost: z.number().optional(),
+  price: z.number().optional(),
   category: z.string().optional().nullable(),
 });
 
@@ -53,6 +54,7 @@ router.post('/items', async (req, res, next) => {
         name: data.name,
         stock: data.stock ?? 0,
         cost: data.cost ?? 0,
+        price: data.price ?? 0,
         categoryId,
       },
       include: { category: true },
@@ -82,6 +84,7 @@ router.patch('/items/:id', async (req, res, next) => {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.stock !== undefined && { stock: data.stock }),
         ...(data.cost !== undefined && { cost: data.cost }),
+        ...(data.price !== undefined && { price: data.price }),
         ...(categoryId !== undefined && { categoryId }),
       },
       include: { category: true },
