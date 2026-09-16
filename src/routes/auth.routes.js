@@ -1,12 +1,25 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
+
+// Brute-force / credential-stuffing guard on the auth endpoints — keyed by
+// IP (trust proxy is set in server.js so this sees the real client IP
+// behind a reverse proxy). Generic message so it doesn't itself leak
+// whether the rate limit is about to trigger for a specific account.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again later.' },
+});
 
 const credentialsSchema = z.object({
   email: z.string().email(),
@@ -24,7 +37,7 @@ function toPublicUser(user) {
   return { id: user.id, email: user.email, name: user.name };
 }
 
-router.post('/register', async (req, res, next) => {
+router.post('/register', authLimiter, async (req, res, next) => {
   try {
     const { email, password, name } = credentialsSchema.parse(req.body);
 
@@ -47,7 +60,7 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
-router.post('/login', async (req, res, next) => {
+router.post('/login', authLimiter, async (req, res, next) => {
   try {
     const { email, password } = credentialsSchema.pick({ email: true, password: true }).parse(req.body);
 
@@ -87,7 +100,7 @@ function hashResetToken(token) {
 // No transactional email provider is chosen yet, so this logs the reset
 // link to the server console instead of sending an email — functionally
 // complete for local dev/testing, clearly not production-ready.
-router.post('/forgot-password', async (req, res, next) => {
+router.post('/forgot-password', authLimiter, async (req, res, next) => {
   try {
     const { email } = z.object({ email: z.string().email() }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email } });
@@ -115,7 +128,7 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
-router.post('/reset-password', async (req, res, next) => {
+router.post('/reset-password', authLimiter, async (req, res, next) => {
   try {
     const { resetToken, newPassword } = z
       .object({ resetToken: z.string().min(1), newPassword: z.string().min(8) })

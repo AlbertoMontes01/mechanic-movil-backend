@@ -1,8 +1,5 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import multer from 'multer';
-import path from 'path';
-import { randomUUID } from 'crypto';
 import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeShopSettings } from '../lib/serialize.js';
@@ -53,21 +50,6 @@ router.put('/', async (req, res, next) => {
     if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid settings data', details: err.issues });
     next(err);
   }
-});
-
-// Dev-only local disk storage — not a final decision (S3/Cloudinary etc. not
-// chosen yet). Files land in backend/uploads, served statically from
-// /uploads by server.js.
-const storage = multer.diskStorage({
-  destination: path.join(process.cwd(), 'uploads'),
-  filename: (req, file, cb) => cb(null, `${randomUUID()}${path.extname(file.originalname)}`),
-});
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
-
-router.post('/logo', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  res.json({ file_url: fileUrl });
 });
 
 export default router;

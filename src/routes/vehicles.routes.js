@@ -36,6 +36,17 @@ async function assertClientOwned(clientId, mechanicId) {
   return Boolean(client);
 }
 
+// Same check workOrders.routes.js does for parts_used — a common_parts row
+// linking to an inventory item must only ever reference the requesting
+// mechanic's own inventory, never another tenant's.
+async function assertInventoryOwnership(commonParts, mechanicId) {
+  const ids = [...new Set((commonParts || []).map((p) => p.inventory_item_id).filter(Boolean))];
+  if (ids.length === 0) return null;
+  const count = await prisma.inventoryItem.count({ where: { id: { in: ids }, mechanicId } });
+  if (count !== ids.length) return 'One or more common_parts reference an inventory item you do not own';
+  return null;
+}
+
 router.get('/', async (req, res, next) => {
   try {
     const where = { client: { mechanicId: req.mechanicId } };
@@ -71,6 +82,8 @@ router.post('/', async (req, res, next) => {
     if (!(await assertClientOwned(data.client_id, req.mechanicId))) {
       return res.status(404).json({ error: 'Client not found' });
     }
+    const inventoryError = await assertInventoryOwnership(data.common_parts, req.mechanicId);
+    if (inventoryError) return res.status(400).json({ error: inventoryError });
 
     const vehicle = await prisma.vehicle.create({
       data: {
@@ -112,6 +125,11 @@ router.patch('/:id', async (req, res, next) => {
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
     });
     if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+
+    if (data.common_parts) {
+      const inventoryError = await assertInventoryOwnership(data.common_parts, req.mechanicId);
+      if (inventoryError) return res.status(400).json({ error: inventoryError });
+    }
 
     const vehicle = await prisma.$transaction(async (tx) => {
       if (data.common_parts) {
