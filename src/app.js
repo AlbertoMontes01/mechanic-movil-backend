@@ -18,9 +18,12 @@ export const app = express();
 app.set('trust proxy', 1);
 
 app.use(helmet());
-// credentials: true + an explicit (non-wildcard) origin — required for the
-// httpOnly refresh-token cookie to be sent/received cross-origin.
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173', credentials: true }));
+// credentials: true + an explicit (non-wildcard) allowlist — required for the
+// httpOnly refresh-token cookie to be sent/received cross-origin. A comma-
+// separated CORS_ORIGIN lets the apex and www variants of the same site
+// both count as trusted (the browser treats them as different origins).
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim());
+app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
