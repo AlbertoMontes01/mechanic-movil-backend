@@ -170,4 +170,21 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const existing = await prisma.vehicle.findFirst({
+      where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
+    });
+    if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+
+    // Cascades: its work orders, invoices, and common-parts rows all go
+    // with it (onDelete: Cascade in schema.prisma) -- nothing else needs
+    // to be deleted first.
+    await prisma.vehicle.delete({ where: { id: existing.id } });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

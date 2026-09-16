@@ -132,8 +132,9 @@ describe('InventoryItem / InventoryCategory isolation', () => {
     assert.ok(!cats.body.some((c) => c.id === categoryA.id));
   });
 
-  test("B can't PATCH A's item or DELETE A's category", async () => {
+  test("B can't PATCH/DELETE A's item, or DELETE A's category", async () => {
     assert.equal((await authed(request(app).patch(`/api/inventory/items/${itemA.id}`), mechB.token).send({ cost: 999 })).status, 404);
+    assert.equal((await authed(request(app).delete(`/api/inventory/items/${itemA.id}`), mechB.token)).status, 404);
     assert.equal((await authed(request(app).delete(`/api/inventory/categories/${categoryA.id}`), mechB.token)).status, 404);
   });
 
@@ -185,6 +186,11 @@ describe('WorkOrder isolation (incl. cross-tenant parts_used IDOR)', () => {
       subjects: [{ description: 'sneaky', parts_used: [{ inventory_item_id: itemA.id, quantity: 1 }] }],
     });
     assert.equal(res.status, 400, "referencing another tenant's inventory item must be rejected");
+  });
+
+  test("A can't delete an inventory item that's actually in use on a work order", async () => {
+    const res = await authed(request(app).delete(`/api/inventory/items/${itemA.id}`), mechA.token);
+    assert.equal(res.status, 409, "a part referenced by work_order_parts_used must be rejected, not silently orphaned");
   });
 });
 

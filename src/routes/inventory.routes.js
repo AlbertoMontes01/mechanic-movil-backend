@@ -96,6 +96,26 @@ router.patch('/items/:id', async (req, res, next) => {
   }
 });
 
+router.delete('/items/:id', async (req, res, next) => {
+  try {
+    const existing = await prisma.inventoryItem.findFirst({
+      where: { id: req.params.id, mechanicId: req.mechanicId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Part not found' });
+
+    await prisma.inventoryItem.delete({ where: { id: existing.id } });
+    res.status(204).end();
+  } catch (err) {
+    // onDelete: Restrict on WorkOrderPartUsed.inventoryItemId -- a part
+    // that's actually been used on a work order can't be hard-deleted, so
+    // surface that as a clear, actionable error instead of a generic 500.
+    if (err.code === 'P2003') {
+      return res.status(409).json({ error: 'This part is used in a work order and can’t be deleted.' });
+    }
+    next(err);
+  }
+});
+
 router.get('/categories', async (req, res, next) => {
   try {
     const categories = await prisma.inventoryCategory.findMany({
