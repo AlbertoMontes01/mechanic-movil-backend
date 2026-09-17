@@ -238,7 +238,14 @@ npm install
 npm audit                      # check for new critical/high findings first
 npm test                       # run against .env.test, NOT the prod DB
 npx prisma migrate deploy      # only does anything if there are new migrations
-pm2 restart mechanic-movil-backend
+npx prisma generate            # ALWAYS run this after migrate deploy -- npm install
+                                # only regenerates the client as a side effect of
+                                # installing a *new* package, so a schema-only
+                                # change (no new deps) silently leaves the old
+                                # client in place otherwise, and every query
+                                # touching the new/changed field 500s until
+                                # someone notices and runs this by hand.
+pm2 restart mechanic-movil-backend --update-env
 
 cd /var/www/mechanic-movil/frontend
 git pull
