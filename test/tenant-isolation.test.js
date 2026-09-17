@@ -284,4 +284,120 @@ describe('Inventory stock adjustments from work orders', () => {
     const afterDelete = await authed(request(app).get('/api/inventory/items'), mechA.token);
     assert.equal(afterDelete.body.find((i) => i.id === itemA.id).stock, 10, '5 + 5 restored = back to the original 10');
   });
+
+  test('a standalone invoice (no work order) decrements stock for its product lines', async () => {
+    const stockAt = async () => (await authed(request(app).get('/api/inventory/items'), mechA.token)).body.find((i) => i.id === itemA.id).stock;
+
+    const res = await authed(request(app).post('/api/invoices'), mechA.token).send({
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      lines: [{ description: 'Stock Part', quantity: 4, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(res.status, 201);
+    assert.equal(await stockAt(), 6, '10 - 4 used = 6');
+
+    // editing the quantity restores the old amount before consuming the new one
+    const editRes = await authed(request(app).patch(`/api/invoices/${res.body.id}`), mechA.token).send({
+      lines: [{ description: 'Stock Part', quantity: 2, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(editRes.status, 200);
+    assert.equal(await stockAt(), 8, '6 + 4 restored - 2 newly used = 8');
+
+    // deleting it restores what it was still holding
+    const delRes = await authed(request(app).delete(`/api/invoices/${res.body.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    assert.equal(await stockAt(), 10, '8 + 2 restored = back to the original 10');
+  });
+
+  test("an invoice generated FROM a work order doesn't double-decrement stock", async () => {
+    const stockAt = async () => (await authed(request(app).get('/api/inventory/items'), mechA.token)).body.find((i) => i.id === itemA.id).stock;
+
+    const woRes = await authed(request(app).post('/api/work-orders'), mechA.token).send({
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      subjects: [{ description: 'Job 2', parts_used: [{ inventory_item_id: itemA.id, quantity: 2 }] }],
+    });
+    assert.equal(woRes.status, 201);
+    assert.equal(await stockAt(), 8, "work order alone: 10 - 2 = 8");
+
+    // the invoice mirrors the same part/quantity (as InvoiceForm.jsx does
+    // when generating one from a work order) -- stock must NOT drop again
+    const invRes = await authed(request(app).post('/api/invoices'), mechA.token).send({
+      work_order_id: woRes.body.id,
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      lines: [{ description: 'Stock Part', quantity: 2, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(invRes.status, 201);
+    assert.equal(await stockAt(), 8, 'still 8 -- the invoice must not decrement again for a work-order-linked line');
+
+    // editing that invoice's lines also must not touch stock
+    const editRes = await authed(request(app).patch(`/api/invoices/${invRes.body.id}`), mechA.token).send({
+      lines: [{ description: 'Stock Part', quantity: 5, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(editRes.status, 200);
+    assert.equal(await stockAt(), 8, 'editing a work-order-linked invoice must not adjust stock either');
+
+    // and deleting a work-order-linked invoice must not restore stock it
+    // never actually held (that would inflate it)
+    const delRes = await authed(request(app).delete(`/api/invoices/${invRes.body.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    assert.equal(await stockAt(), 8, 'deleting the invoice must not restore stock -- it never decremented it');
+
+    // cleanup: give the part back via the work order that's still open
+    await authed(request(app).delete(`/api/work-orders/${woRes.body.id}`), mechA.token);
+    assert.equal(await stockAt(), 10, 'sanity check: back to 10 once the work order itself is gone');
+  });
+
+  test("deleting a work order whose invoice survives doesn't let that orphaned invoice inflate stock later", async () => {
+    const stockAt = async () => (await authed(request(app).get('/api/inventory/items'), mechA.token)).body.find((i) => i.id === itemA.id).stock;
+
+    const woRes = await authed(request(app).post('/api/work-orders'), mechA.token).send({
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      subjects: [{ description: 'Job 3', parts_used: [{ inventory_item_id: itemA.id, quantity: 1 }] }],
+    });
+    const invRes = await authed(request(app).post('/api/invoices'), mechA.token).send({
+      work_order_id: woRes.body.id,
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      lines: [{ description: 'Stock Part', quantity: 1, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(await stockAt(), 9, '10 - 1 = 9');
+
+    // deleting the work order (not the invoice) restores its 1 unit --
+    // Invoice.workOrderId -> null (onDelete: SetNull), but the invoice's
+    // own stockAdjustedHere flag must stay false regardless
+    await authed(request(app).delete(`/api/work-orders/${woRes.body.id}`), mechA.token);
+    assert.equal(await stockAt(), 10, 'work order deletion alone restores the 1 unit');
+
+    // now delete the orphaned invoice -- it must NOT restore stock again,
+    // since it never decremented any itself
+    const delRes = await authed(request(app).delete(`/api/invoices/${invRes.body.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    assert.equal(await stockAt(), 10, "the orphaned invoice's own delete must not inflate stock past the original 10");
+  });
+
+  test("B can't create or edit an invoice line referencing A's inventory item (IDOR)", async () => {
+    const clientB = (await authed(request(app).post('/api/clients'), mechB.token).send({ name: 'Stock Client B', phone: '555-0010' })).body;
+    const vehicleB = (await authed(request(app).post('/api/vehicles'), mechB.token).send({ client_id: clientB.id, make: 'Ford', model: 'Ranger' })).body;
+
+    const createRes = await authed(request(app).post('/api/invoices'), mechB.token).send({
+      client_id: clientB.id,
+      vehicle_id: vehicleB.id,
+      lines: [{ description: 'sneaky', quantity: 1, unit_price: 10, inventory_item_id: itemA.id }],
+    });
+    assert.equal(createRes.status, 400, "referencing another tenant's inventory item must be rejected");
+
+    const legitRes = await authed(request(app).post('/api/invoices'), mechB.token).send({
+      client_id: clientB.id,
+      vehicle_id: vehicleB.id,
+      lines: [{ description: 'legit line', quantity: 1, unit_price: 10 }],
+    });
+    assert.equal(legitRes.status, 201);
+    const editRes = await authed(request(app).patch(`/api/invoices/${legitRes.body.id}`), mechB.token).send({
+      lines: [{ description: 'sneaky edit', quantity: 1, unit_price: 10, inventory_item_id: itemA.id }],
+    });
+    assert.equal(editRes.status, 400, "editing in a reference to another tenant's inventory item must also be rejected");
+  });
 });

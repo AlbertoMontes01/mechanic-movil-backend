@@ -125,6 +125,7 @@ export function serializeInvoice(inv) {
         quantity: l.quantity,
         unit_price: Number(l.unitPrice),
         total: Number(l.total),
+        inventory_item_id: l.inventoryItemId,
       })),
     created_date: inv.createdAt,
     updated_date: inv.updatedAt,

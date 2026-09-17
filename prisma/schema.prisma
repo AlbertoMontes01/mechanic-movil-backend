@@ -170,6 +170,7 @@ model InventoryItem {
 
   vehicleCommonParts VehicleCommonPart[]
   workOrderParts     WorkOrderPartUsed[]
+  invoiceLines       InvoiceLine[]
 
   @@index([mechanicId])
   @@map("inventory_items")
@@ -254,6 +255,15 @@ model Invoice {
 
   workOrderId String?    @unique
   workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  // True iff this invoice's own product lines decremented stock at
+  // creation (i.e. it had no work_order_id then) -- decided once, at
+  // creation, and never re-derived from workOrderId afterwards. Needed
+  // because workOrderId can later go back to null on its own (the work
+  // order it pointed to gets deleted, onDelete: SetNull) without this
+  // invoice's lines ever having touched stock themselves; without a
+  // separate flag, editing/deleting it afterwards would wrongly "restore"
+  // stock that this invoice never actually consumed.
+  stockAdjustedHere Boolean @default(false)
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -289,6 +299,16 @@ model InvoiceLine {
   unitPrice   Decimal @default(0) @db.Decimal(10, 2)
   total       Decimal @default(0) @db.Decimal(10, 2)
   position    Int     @default(0)
+
+  // Which inventory item this line came from, if it was a Product line
+  // (a Service line leaves this null). Used to decrement/restore stock
+  // for invoices that stand on their own (no work_order_id) -- an
+  // invoice generated FROM a work order doesn't touch stock again here,
+  // since the work order's own parts_used already did. SetNull rather
+  // than Restrict: unlike an in-progress work order, there's no reason a
+  // historical invoice should block deleting a part it once referenced.
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@map("invoice_lines")

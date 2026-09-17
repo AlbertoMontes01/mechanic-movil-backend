@@ -13,6 +13,7 @@ const lineSchema = z.object({
   quantity: z.number().optional(),
   unit_price: z.number().optional(),
   total: z.number().optional(),
+  inventory_item_id: z.string().uuid().optional().nullable(),
 });
 
 const invoiceSchema = z.object({
@@ -33,7 +34,44 @@ const include = { lines: true };
 function computeLine(l) {
   const quantity = l.quantity ?? 1;
   const unitPrice = l.unit_price ?? 0;
-  return { description: stripHtml(l.description) || null, quantity, unitPrice, total: quantity * unitPrice };
+  return {
+    description: stripHtml(l.description) || null,
+    quantity,
+    unitPrice,
+    total: quantity * unitPrice,
+    inventoryItemId: l.inventory_item_id || null,
+  };
+}
+
+async function assertInventoryOwnership(lines, mechanicId) {
+  const ids = [...new Set((lines || []).map((l) => l.inventory_item_id).filter(Boolean))];
+  if (ids.length === 0) return null;
+  const count = await prisma.inventoryItem.count({ where: { id: { in: ids }, mechanicId } });
+  if (count !== ids.length) return 'One or more lines reference an inventory item you do not own';
+  return null;
+}
+
+// A standalone invoice (no work_order_id) is the only place its own
+// product lines' stock impact is tracked -- an invoice generated FROM a
+// work order doesn't touch stock again here, since the work order's own
+// parts_used already did when it was logged (see workOrders.routes.js).
+// Double-decrementing the same usage is exactly the bug this guards.
+function sumQuantitiesByItem(lines) {
+  const totals = new Map();
+  for (const l of lines) {
+    if (!l.inventoryItemId) continue;
+    totals.set(l.inventoryItemId, (totals.get(l.inventoryItemId) || 0) + (l.quantity ?? 1));
+  }
+  return totals;
+}
+
+async function adjustStock(tx, quantitiesByItem, sign) {
+  for (const [inventoryItemId, qty] of quantitiesByItem) {
+    await tx.inventoryItem.update({
+      where: { id: inventoryItemId },
+      data: { stock: { increment: sign * qty } },
+    });
+  }
 }
 
 router.get('/', async (req, res, next) => {
@@ -79,6 +117,9 @@ router.post('/', async (req, res, next) => {
       if (workOrder.invoice) return res.status(409).json({ error: 'This work order already has an invoice' });
     }
 
+    const inventoryError = await assertInventoryOwnership(data.lines || [], req.mechanicId);
+    if (inventoryError) return res.status(400).json({ error: inventoryError });
+
     const lines = (data.lines || []).map(computeLine);
     const subtotal = lines.reduce((s, l) => s + l.total, 0);
     const tax = data.tax ?? 0;
@@ -96,6 +137,7 @@ router.post('/', async (req, res, next) => {
           subtotal,
           tax,
           total,
+          stockAdjustedHere: !data.work_order_id,
           lines: { create: lines.map((l, i) => ({ ...l, position: i })) },
         },
         include,
@@ -103,6 +145,11 @@ router.post('/', async (req, res, next) => {
 
       if (data.work_order_id) {
         await tx.workOrder.update({ where: { id: data.work_order_id }, data: { status: 'Invoiced' } });
+      } else {
+        // Only a standalone invoice adjusts stock itself -- one tied to a
+        // work order already had its parts consumed when that work order
+        // was created/logged.
+        await adjustStock(tx, sumQuantitiesByItem(lines), -1);
       }
 
       return created;
@@ -124,6 +171,11 @@ router.patch('/:id', async (req, res, next) => {
     });
     if (!existing) return res.status(404).json({ error: 'Invoice not found' });
 
+    if (data.lines) {
+      const inventoryError = await assertInventoryOwnership(data.lines, req.mechanicId);
+      if (inventoryError) return res.status(400).json({ error: inventoryError });
+    }
+
     let subtotal, tax, total, linesUpdate;
     if (data.lines) {
       const lines = data.lines.map(computeLine);
@@ -139,9 +191,17 @@ router.patch('/:id', async (req, res, next) => {
 
     const invoice = await prisma.$transaction(async (tx) => {
       if (linesUpdate) {
+        // Same rule as creating one: a standalone invoice (no
+        // work_order_id) owns its own stock impact -- restore what the
+        // old lines held before consuming what the new ones do, so
+        // editing a quantity doesn't just pile a second decrement on top.
+        if (existing.stockAdjustedHere) {
+          const oldLines = await tx.invoiceLine.findMany({ where: { invoiceId: existing.id } });
+          await adjustStock(tx, sumQuantitiesByItem(oldLines.map((l) => ({ inventoryItemId: l.inventoryItemId, quantity: l.quantity }))), +1);
+        }
         await tx.invoiceLine.deleteMany({ where: { invoiceId: existing.id } });
       }
-      return tx.invoice.update({
+      const updated = await tx.invoice.update({
         where: { id: existing.id },
         data: {
           ...(data.invoice_number !== undefined && { invoiceNumber: stripHtml(data.invoice_number) || null }),
@@ -152,6 +212,12 @@ router.patch('/:id', async (req, res, next) => {
         },
         include,
       });
+
+      if (linesUpdate && existing.stockAdjustedHere) {
+        await adjustStock(tx, sumQuantitiesByItem(linesUpdate), -1);
+      }
+
+      return updated;
     });
 
     res.json(serializeInvoice(invoice));
@@ -165,10 +231,16 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const existing = await prisma.invoice.findFirst({
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
+      include: { lines: true },
     });
     if (!existing) return res.status(404).json({ error: 'Invoice not found' });
 
-    await prisma.invoice.delete({ where: { id: existing.id } });
+    await prisma.$transaction(async (tx) => {
+      if (existing.stockAdjustedHere) {
+        await adjustStock(tx, sumQuantitiesByItem(existing.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, quantity: l.quantity }))), +1);
+      }
+      await tx.invoice.delete({ where: { id: existing.id } });
+    });
     res.status(204).end();
   } catch (err) {
     next(err);
