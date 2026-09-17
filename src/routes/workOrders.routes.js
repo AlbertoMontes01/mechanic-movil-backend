@@ -247,15 +247,14 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const existing = await prisma.workOrder.findFirst({
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
-      include: { subjects: { include: { partsUsed: true } } },
     });
     if (!existing) return res.status(404).json({ error: 'Work order not found' });
 
-    await prisma.$transaction(async (tx) => {
-      const usedQty = sumQuantitiesByItem(existing.subjects.flatMap((s) => s.partsUsed), 'inventoryItemId', 'quantity');
-      await adjustStock(tx, usedQty, +1); // deleting the work order means that usage no longer stands
-      await tx.workOrder.delete({ where: { id: existing.id } });
-    });
+    // Deliberately does NOT restore stock. A part logged as used was
+    // physically taken off the shelf -- deleting the paperwork afterward
+    // doesn't put it back. Only create/edit adjust stock, because those
+    // are the actions that change what was actually used.
+    await prisma.workOrder.delete({ where: { id: existing.id } });
     res.status(204).end();
   } catch (err) {
     next(err);

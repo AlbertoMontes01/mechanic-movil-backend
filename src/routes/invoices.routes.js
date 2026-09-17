@@ -234,16 +234,14 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const existing = await prisma.invoice.findFirst({
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
-      include: { lines: true },
     });
     if (!existing) return res.status(404).json({ error: 'Invoice not found' });
 
-    await prisma.$transaction(async (tx) => {
-      if (existing.stockAdjustedHere) {
-        await adjustStock(tx, sumQuantitiesByItem(existing.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, quantity: l.quantity }))), +1);
-      }
-      await tx.invoice.delete({ where: { id: existing.id } });
-    });
+    // Deliberately does NOT restore stock, even for a standalone invoice
+    // that decremented it (stockAdjustedHere) -- the part was physically
+    // used; deleting the invoice record afterward doesn't undo that. Only
+    // create/edit adjust stock.
+    await prisma.invoice.delete({ where: { id: existing.id } });
     res.status(204).end();
   } catch (err) {
     next(err);

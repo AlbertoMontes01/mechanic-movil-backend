@@ -4,7 +4,6 @@ import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeClient } from '../lib/serialize.js';
 import { sanitizeStrings } from '../lib/sanitize.js';
-import { restoreStockForCascadedDeletes } from '../lib/stockRestore.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -79,13 +78,11 @@ router.delete('/:id', async (req, res, next) => {
     });
     if (!existing) return res.status(404).json({ error: 'Client not found' });
 
-    await prisma.$transaction(async (tx) => {
-      await restoreStockForCascadedDeletes(tx, {
-        workOrderWhere: { clientId: existing.id },
-        invoiceWhere: { clientId: existing.id },
-      });
-      await tx.client.delete({ where: { id: existing.id } });
-    });
+    // Cascades away this client's vehicles, work orders, and invoices
+    // (onDelete: Cascade). Deliberately does NOT restore any stock those
+    // work orders/invoices had consumed -- see workOrders.routes.js and
+    // invoices.routes.js for why deleting never restores stock.
+    await prisma.client.delete({ where: { id: existing.id } });
     res.status(204).end();
   } catch (err) {
     next(err);
