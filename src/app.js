@@ -29,6 +29,18 @@ app.use(cookieParser());
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// Shop logos are served from a different origin than the frontend
+// (app./api. subdomains, or api.pitstop.systems vs pitstop.systems) --
+// helmet's default Cross-Origin-Resource-Policy: same-origin would block
+// the browser from actually rendering them as <img> there, so relax it
+// for just this path. These are logo images meant to appear on
+// customer-facing invoice PDFs, not sensitive data, so that's fine.
+app.use(
+  '/uploads',
+  helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
+  express.static('uploads')
+);
+
 app.use('/api', apiRoutes);
 
 app.use(notFoundHandler);
