@@ -26,6 +26,7 @@ const invoiceSchema = z.object({
   subtotal: z.number().optional(),
   tax: z.number().optional(),
   total: z.number().optional(),
+  customer_note: z.string().optional().nullable(),
   lines: z.array(lineSchema).optional(),
 });
 
@@ -137,6 +138,7 @@ router.post('/', async (req, res, next) => {
           subtotal,
           tax,
           total,
+          customerNote: stripHtml(data.customer_note) || null,
           stockAdjustedHere: !data.work_order_id,
           lines: { create: lines.map((l, i) => ({ ...l, position: i })) },
         },
@@ -207,6 +209,7 @@ router.patch('/:id', async (req, res, next) => {
           ...(data.invoice_number !== undefined && { invoiceNumber: stripHtml(data.invoice_number) || null }),
           ...(data.date !== undefined && { date: data.date ? new Date(data.date) : null }),
           ...(data.status !== undefined && { status: data.status }),
+          ...(data.customer_note !== undefined && { customerNote: stripHtml(data.customer_note) || null }),
           ...(subtotal !== undefined && { subtotal, tax, total }),
           ...(linesUpdate && { lines: { create: linesUpdate.map((l, i) => ({ ...l, position: i })) } }),
         },

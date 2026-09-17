@@ -118,6 +118,7 @@ export function serializeInvoice(inv) {
     subtotal: Number(inv.subtotal),
     tax: Number(inv.tax),
     total: Number(inv.total),
+    customer_note: inv.customerNote,
     lines: (inv.lines || [])
       .sort((a, b) => a.position - b.position)
       .map((l) => ({
@@ -141,6 +142,7 @@ export function serializeShopSettings(s) {
     phone: s.phone,
     address: s.address,
     tax_rate: Number(s.taxRate),
+    invoice_terms: s.invoiceTerms,
     created_date: s.createdAt,
     updated_date: s.updatedAt,
   };

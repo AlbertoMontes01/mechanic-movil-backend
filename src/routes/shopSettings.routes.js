@@ -22,6 +22,7 @@ const settingsSchema = z.object({
   phone: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
   tax_rate: z.number().optional(),
+  invoice_terms: z.string().optional().nullable(),
 });
 
 router.get('/', async (req, res, next) => {
@@ -45,6 +46,7 @@ router.put('/', async (req, res, next) => {
         phone: stripHtml(data.phone) || null,
         address: stripHtml(data.address) || null,
         taxRate: data.tax_rate ?? 0,
+        invoiceTerms: stripHtml(data.invoice_terms) || null,
       },
       update: {
         shopName: stripHtml(data.shop_name),
@@ -52,6 +54,7 @@ router.put('/', async (req, res, next) => {
         phone: stripHtml(data.phone) || null,
         address: stripHtml(data.address) || null,
         taxRate: data.tax_rate ?? 0,
+        invoiceTerms: stripHtml(data.invoice_terms) || null,
       },
     });
     res.json(serializeShopSettings(settings));

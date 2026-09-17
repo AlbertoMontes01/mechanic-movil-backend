@@ -77,6 +77,20 @@ async function adjustStock(tx, quantitiesByItem, sign) {
   }
 }
 
+// First time a mechanic types their own name into "Technician" (their
+// account has none yet -- WorkOrderForm.jsx otherwise defaults that field
+// to their email), save it as their profile name so it's used as the
+// default from then on, and so Settings has something real to show/edit.
+// Never overwrites a name that's already set -- after the first job, the
+// field is just free text for whoever's actually on that particular job.
+async function backfillTechnicianAsName(mechanicId, technicianName) {
+  if (!technicianName) return;
+  const user = await prisma.user.findUnique({ where: { id: mechanicId } });
+  if (user && !user.name) {
+    await prisma.user.update({ where: { id: mechanicId }, data: { name: technicianName } });
+  }
+}
+
 router.get('/', async (req, res, next) => {
   try {
     const where = { client: { mechanicId: req.mechanicId } };
@@ -152,6 +166,7 @@ router.post('/', async (req, res, next) => {
 
       return created;
     });
+    await backfillTechnicianAsName(req.mechanicId, stripHtml(data.technician_name));
     res.status(201).json(serializeWorkOrder(workOrder));
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid work order data', details: err.issues });
@@ -218,6 +233,9 @@ router.patch('/:id', async (req, res, next) => {
       return updated;
     });
 
+    if (data.technician_name !== undefined) {
+      await backfillTechnicianAsName(req.mechanicId, stripHtml(data.technician_name));
+    }
     res.json(serializeWorkOrder(workOrder));
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid work order data', details: err.issues });

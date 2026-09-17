@@ -181,6 +181,20 @@ router.get('/me', requireAuth, async (req, res, next) => {
   }
 });
 
+router.patch('/me', requireAuth, async (req, res, next) => {
+  try {
+    const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
+    const user = await prisma.user.update({
+      where: { id: req.mechanicId },
+      data: { name: stripHtml(name) },
+    });
+    res.json(toPublicUser(user));
+  } catch (err) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid name' });
+    next(err);
+  }
+});
+
 // No transactional email provider is chosen yet. In dev, the reset link is
 // logged to the server console so the flow can be exercised end to end; in
 // production that log is suppressed (it's a sensitive token) which means
