@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeInventoryCategory, serializeInventoryItem } from '../lib/serialize.js';
 import { sanitizeStrings } from '../lib/sanitize.js';
@@ -63,7 +64,7 @@ router.post('/items', async (req, res, next) => {
     });
     res.status(201).json(serializeInventoryItem(item));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid part data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -94,7 +95,7 @@ router.patch('/items/:id', async (req, res, next) => {
     });
     res.json(serializeInventoryItem(item));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid part data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -140,7 +141,7 @@ router.post('/categories', async (req, res, next) => {
     res.status(201).json(serializeInventoryCategory(category));
   } catch (err) {
     if (err.code === 'P2002') return res.status(409).json({ error: 'Category already exists' });
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid category data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });

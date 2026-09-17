@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeVehicle } from '../lib/serialize.js';
 import { stripHtml, sanitizeStrings } from '../lib/sanitize.js';
@@ -113,7 +114,7 @@ router.post('/', async (req, res, next) => {
     });
     res.status(201).json(serializeVehicle(vehicle));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid vehicle data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -165,7 +166,7 @@ router.patch('/:id', async (req, res, next) => {
 
     res.json(serializeVehicle(vehicle));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid vehicle data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });

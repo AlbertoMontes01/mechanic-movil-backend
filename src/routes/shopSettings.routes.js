@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { requireAuth } from '../middleware/auth.js';
+import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeShopSettings } from '../lib/serialize.js';
 import { stripHtml } from '../lib/sanitize.js';
@@ -59,7 +60,7 @@ router.put('/', async (req, res, next) => {
     });
     res.json(serializeShopSettings(settings));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid settings data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });

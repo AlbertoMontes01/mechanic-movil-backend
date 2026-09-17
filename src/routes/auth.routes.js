@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { stripHtml } from '../lib/sanitize.js';
+import { handleZodError, zodErrorMessage } from '../lib/zodError.js';
 
 const router = Router();
 
@@ -98,9 +99,7 @@ router.post('/register', authLimiter, async (req, res, next) => {
     const token = await issueTokenPair(res, user);
     res.status(201).json({ user: toPublicUser(user), token });
   } catch (err) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: err.issues?.[0]?.message || 'Invalid email or password', details: err.issues });
-    }
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -123,6 +122,10 @@ router.post('/login', authLimiter, async (req, res, next) => {
     res.json({ user: toPublicUser(user), token });
   } catch (err) {
     if (err.name === 'ZodError') {
+      // Deliberately generic response (never say which of email/password
+      // was wrong) -- but still log the real reason so a genuine bug in
+      // the login form itself doesn't stay invisible.
+      console.warn(`[400] ${req.method} ${req.originalUrl} -> ${zodErrorMessage(err)}`);
       return res.status(400).json({ error: 'Invalid email or password' });
     }
     next(err);
@@ -190,7 +193,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
     });
     res.json(toPublicUser(user));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid name' });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -227,7 +230,7 @@ router.post('/forgot-password', authLimiter, async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid email' });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -262,7 +265,7 @@ router.post('/reset-password', authLimiter, async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: err.issues?.[0]?.message || 'Invalid request' });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });

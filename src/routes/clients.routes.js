@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeClient } from '../lib/serialize.js';
 import { sanitizeStrings } from '../lib/sanitize.js';
@@ -50,7 +51,7 @@ router.post('/', async (req, res, next) => {
     });
     res.status(201).json(serializeClient(client));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid client data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
@@ -66,7 +67,7 @@ router.patch('/:id', async (req, res, next) => {
     const client = await prisma.client.update({ where: { id: existing.id }, data });
     res.json(serializeClient(client));
   } catch (err) {
-    if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid client data', details: err.issues });
+    if (err.name === 'ZodError') return handleZodError(err, req, res);
     next(err);
   }
 });
