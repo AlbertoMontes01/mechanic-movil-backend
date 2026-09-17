@@ -248,3 +248,40 @@ describe('cross-tenant resource combination', () => {
     assert.equal(res.status, 404, "vehicle_id must belong to the given client_id, not just to the requesting mechanic");
   });
 });
+
+describe('Inventory stock adjustments from work orders', () => {
+  let clientA, vehicleA, itemA;
+
+  before(async () => {
+    clientA = (await authed(request(app).post('/api/clients'), mechA.token).send({ name: 'Stock Client', phone: '555-0009' })).body;
+    vehicleA = (await authed(request(app).post('/api/vehicles'), mechA.token).send({ client_id: clientA.id, make: 'Chevy', model: 'Silverado' })).body;
+    itemA = (await authed(request(app).post('/api/inventory/items'), mechA.token).send({ name: 'Stock Part', stock: 10, cost: 5 })).body;
+  });
+
+  test('creating a work order decrements stock by the quantity used', async () => {
+    const res = await authed(request(app).post('/api/work-orders'), mechA.token).send({
+      client_id: clientA.id,
+      vehicle_id: vehicleA.id,
+      subjects: [{ description: 'Job 1', parts_used: [{ inventory_item_id: itemA.id, quantity: 3 }] }],
+    });
+    assert.equal(res.status, 201);
+    const item = await authed(request(app).get('/api/inventory/items'), mechA.token);
+    assert.equal(item.body.find((i) => i.id === itemA.id).stock, 7, '10 - 3 used = 7');
+
+    // editing it to use a different quantity restores the old amount first,
+    // then consumes the new one -- not just consuming the new amount on top
+    const wo = res.body;
+    const editRes = await authed(request(app).patch(`/api/work-orders/${wo.id}`), mechA.token).send({
+      subjects: [{ description: 'Job 1 (revised)', parts_used: [{ inventory_item_id: itemA.id, quantity: 5 }] }],
+    });
+    assert.equal(editRes.status, 200);
+    const afterEdit = await authed(request(app).get('/api/inventory/items'), mechA.token);
+    assert.equal(afterEdit.body.find((i) => i.id === itemA.id).stock, 5, '7 + 3 restored - 5 newly used = 5');
+
+    // deleting the work order restores the stock it was still holding
+    const delRes = await authed(request(app).delete(`/api/work-orders/${wo.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    const afterDelete = await authed(request(app).get('/api/inventory/items'), mechA.token);
+    assert.equal(afterDelete.body.find((i) => i.id === itemA.id).stock, 10, '5 + 5 restored = back to the original 10');
+  });
+});

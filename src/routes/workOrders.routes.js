@@ -51,6 +51,32 @@ async function assertInventoryOwnership(subjects, mechanicId) {
   return null;
 }
 
+// A part logged as "used" on a work order is physically off the shelf --
+// stock is adjusted the moment it's logged, not deferred to some later
+// status. Sums quantities per item first so a part appearing in several
+// subjects of the same work order is still a single stock update, not one
+// per occurrence.
+function sumQuantitiesByItem(entries, idKey, qtyKey) {
+  const totals = new Map();
+  for (const e of entries) {
+    const id = e[idKey];
+    const qty = e[qtyKey] ?? 1;
+    totals.set(id, (totals.get(id) || 0) + qty);
+  }
+  return totals;
+}
+
+// sign -1 to consume stock (a part was used), +1 to restore it (a work
+// order or its parts were edited/deleted, so that usage no longer stands).
+async function adjustStock(tx, quantitiesByItem, sign) {
+  for (const [inventoryItemId, qty] of quantitiesByItem) {
+    await tx.inventoryItem.update({
+      where: { id: inventoryItemId },
+      data: { stock: { increment: sign * qty } },
+    });
+  }
+}
+
 router.get('/', async (req, res, next) => {
   try {
     const where = { client: { mechanicId: req.mechanicId } };
@@ -95,29 +121,36 @@ router.post('/', async (req, res, next) => {
     const inventoryError = await assertInventoryOwnership(subjects, req.mechanicId);
     if (inventoryError) return res.status(400).json({ error: inventoryError });
 
-    const workOrder = await prisma.workOrder.create({
-      data: {
-        clientId: data.client_id,
-        vehicleId: data.vehicle_id,
-        technicianName: stripHtml(data.technician_name) || null,
-        status: data.status ? workOrderStatusFromWire(data.status) : undefined,
-        date: data.date ? new Date(data.date) : null,
-        generalNotes: stripHtml(data.general_notes) || null,
-        subjects: {
-          create: subjects.map((s, i) => ({
-            description: stripHtml(s.description) || null,
-            note: stripHtml(s.note) || null,
-            position: i,
-            partsUsed: {
-              create: (s.parts_used || []).map((p) => ({
-                inventoryItemId: p.inventory_item_id,
-                quantity: p.quantity ?? 1,
-              })),
-            },
-          })),
+    const workOrder = await prisma.$transaction(async (tx) => {
+      const created = await tx.workOrder.create({
+        data: {
+          clientId: data.client_id,
+          vehicleId: data.vehicle_id,
+          technicianName: stripHtml(data.technician_name) || null,
+          status: data.status ? workOrderStatusFromWire(data.status) : undefined,
+          date: data.date ? new Date(data.date) : null,
+          generalNotes: stripHtml(data.general_notes) || null,
+          subjects: {
+            create: subjects.map((s, i) => ({
+              description: stripHtml(s.description) || null,
+              note: stripHtml(s.note) || null,
+              position: i,
+              partsUsed: {
+                create: (s.parts_used || []).map((p) => ({
+                  inventoryItemId: p.inventory_item_id,
+                  quantity: p.quantity ?? 1,
+                })),
+              },
+            })),
+          },
         },
-      },
-      include,
+        include,
+      });
+
+      const usedQty = sumQuantitiesByItem(subjects.flatMap((s) => s.parts_used || []), 'inventory_item_id', 'quantity');
+      await adjustStock(tx, usedQty, -1);
+
+      return created;
     });
     res.status(201).json(serializeWorkOrder(workOrder));
   } catch (err) {
@@ -142,9 +175,16 @@ router.patch('/:id', async (req, res, next) => {
 
     const workOrder = await prisma.$transaction(async (tx) => {
       if (data.subjects) {
+        const oldSubjects = await tx.workOrderSubject.findMany({
+          where: { workOrderId: existing.id },
+          include: { partsUsed: true },
+        });
+        const oldUsedQty = sumQuantitiesByItem(oldSubjects.flatMap((s) => s.partsUsed), 'inventoryItemId', 'quantity');
+        await adjustStock(tx, oldUsedQty, +1); // the old usage no longer stands -- give it back first
+
         await tx.workOrderSubject.deleteMany({ where: { workOrderId: existing.id } });
       }
-      return tx.workOrder.update({
+      const updated = await tx.workOrder.update({
         where: { id: existing.id },
         data: {
           ...(data.technician_name !== undefined && { technicianName: stripHtml(data.technician_name) || null }),
@@ -169,6 +209,13 @@ router.patch('/:id', async (req, res, next) => {
         },
         include,
       });
+
+      if (data.subjects) {
+        const newUsedQty = sumQuantitiesByItem(data.subjects.flatMap((s) => s.parts_used || []), 'inventory_item_id', 'quantity');
+        await adjustStock(tx, newUsedQty, -1);
+      }
+
+      return updated;
     });
 
     res.json(serializeWorkOrder(workOrder));
@@ -182,10 +229,15 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const existing = await prisma.workOrder.findFirst({
       where: { id: req.params.id, client: { mechanicId: req.mechanicId } },
+      include: { subjects: { include: { partsUsed: true } } },
     });
     if (!existing) return res.status(404).json({ error: 'Work order not found' });
 
-    await prisma.workOrder.delete({ where: { id: existing.id } });
+    await prisma.$transaction(async (tx) => {
+      const usedQty = sumQuantitiesByItem(existing.subjects.flatMap((s) => s.partsUsed), 'inventoryItemId', 'quantity');
+      await adjustStock(tx, usedQty, +1); // deleting the work order means that usage no longer stands
+      await tx.workOrder.delete({ where: { id: existing.id } });
+    });
     res.status(204).end();
   } catch (err) {
     next(err);
