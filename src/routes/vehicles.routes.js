@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeVehicle } from '../lib/serialize.js';
 import { stripHtml, sanitizeStrings } from '../lib/sanitize.js';
+import { restoreStockForCascadedDeletes } from '../lib/stockRestore.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -178,9 +179,16 @@ router.delete('/:id', async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
 
     // Cascades: its work orders, invoices, and common-parts rows all go
-    // with it (onDelete: Cascade in schema.prisma) -- nothing else needs
-    // to be deleted first.
-    await prisma.vehicle.delete({ where: { id: existing.id } });
+    // with it (onDelete: Cascade in schema.prisma) -- but any stock those
+    // work orders/invoices consumed needs restoring explicitly first,
+    // since a DB-level cascade bypasses their own DELETE routes entirely.
+    await prisma.$transaction(async (tx) => {
+      await restoreStockForCascadedDeletes(tx, {
+        workOrderWhere: { vehicleId: existing.id },
+        invoiceWhere: { vehicleId: existing.id },
+      });
+      await tx.vehicle.delete({ where: { id: existing.id } });
+    });
     res.status(204).end();
   } catch (err) {
     next(err);

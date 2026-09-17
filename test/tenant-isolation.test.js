@@ -400,4 +400,55 @@ describe('Inventory stock adjustments from work orders', () => {
     });
     assert.equal(editRes.status, 400, "editing in a reference to another tenant's inventory item must also be rejected");
   });
+
+  test('deleting a vehicle restores stock its work order and standalone invoice were holding', async () => {
+    const stockAt = async () => (await authed(request(app).get('/api/inventory/items'), mechA.token)).body.find((i) => i.id === itemA.id).stock;
+    const startStock = await stockAt();
+
+    const client = (await authed(request(app).post('/api/clients'), mechA.token).send({ name: 'Cascade Client', phone: '555-0011' })).body;
+    const vehicle = (await authed(request(app).post('/api/vehicles'), mechA.token).send({ client_id: client.id, make: 'GMC', model: 'Sierra' })).body;
+
+    await authed(request(app).post('/api/work-orders'), mechA.token).send({
+      client_id: client.id,
+      vehicle_id: vehicle.id,
+      subjects: [{ description: 'Cascade WO', parts_used: [{ inventory_item_id: itemA.id, quantity: 2 }] }],
+    });
+    await authed(request(app).post('/api/invoices'), mechA.token).send({
+      client_id: client.id,
+      vehicle_id: vehicle.id,
+      lines: [{ description: 'Cascade Invoice', quantity: 3, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(await stockAt(), startStock - 5, 'work order (2) + standalone invoice (3) = 5 consumed');
+
+    // deleting the vehicle cascades away the work order and invoice at the
+    // DB level -- their own DELETE routes (and restore logic) never run
+    const delRes = await authed(request(app).delete(`/api/vehicles/${vehicle.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    assert.equal(await stockAt(), startStock, "vehicle deletion must restore the stock its cascaded-away work order/invoice were holding");
+  });
+
+  test('deleting a client restores stock across all of its vehicles', async () => {
+    const stockAt = async () => (await authed(request(app).get('/api/inventory/items'), mechA.token)).body.find((i) => i.id === itemA.id).stock;
+    const startStock = await stockAt();
+
+    const client = (await authed(request(app).post('/api/clients'), mechA.token).send({ name: 'Cascade Client 2', phone: '555-0012' })).body;
+    const vehicle1 = (await authed(request(app).post('/api/vehicles'), mechA.token).send({ client_id: client.id, make: 'Ram', model: '2500' })).body;
+    const vehicle2 = (await authed(request(app).post('/api/vehicles'), mechA.token).send({ client_id: client.id, make: 'Ram', model: '3500' })).body;
+
+    await authed(request(app).post('/api/work-orders'), mechA.token).send({
+      client_id: client.id,
+      vehicle_id: vehicle1.id,
+      subjects: [{ description: 'WO on vehicle 1', parts_used: [{ inventory_item_id: itemA.id, quantity: 1 }] }],
+    });
+    await authed(request(app).post('/api/invoices'), mechA.token).send({
+      client_id: client.id,
+      vehicle_id: vehicle2.id,
+      lines: [{ description: 'Invoice on vehicle 2', quantity: 4, unit_price: 20, inventory_item_id: itemA.id }],
+    });
+    assert.equal(await stockAt(), startStock - 5, '1 (vehicle 1 WO) + 4 (vehicle 2 invoice) = 5 consumed');
+
+    const delRes = await authed(request(app).delete(`/api/clients/${client.id}`), mechA.token);
+    assert.equal(delRes.status, 204);
+    assert.equal(await stockAt(), startStock, 'client deletion must restore stock across every vehicle it cascaded away');
+  });
 });

@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeClient } from '../lib/serialize.js';
 import { sanitizeStrings } from '../lib/sanitize.js';
+import { restoreStockForCascadedDeletes } from '../lib/stockRestore.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -78,7 +79,13 @@ router.delete('/:id', async (req, res, next) => {
     });
     if (!existing) return res.status(404).json({ error: 'Client not found' });
 
-    await prisma.client.delete({ where: { id: existing.id } });
+    await prisma.$transaction(async (tx) => {
+      await restoreStockForCascadedDeletes(tx, {
+        workOrderWhere: { clientId: existing.id },
+        invoiceWhere: { clientId: existing.id },
+      });
+      await tx.client.delete({ where: { id: existing.id } });
+    });
     res.status(204).end();
   } catch (err) {
     next(err);
