@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeWorkOrder, workOrderStatusFromWire } from '../lib/serialize.js';
@@ -8,6 +9,7 @@ import { stripHtml } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
+router.use(requireActiveSubscription);
 
 const STATUSES = ['Draft', 'In Progress', 'Ready to Invoice', 'Invoiced'];
 

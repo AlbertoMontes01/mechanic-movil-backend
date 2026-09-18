@@ -92,8 +92,16 @@ router.post('/register', authLimiter, async (req, res, next) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    // The Subscription row always exists from the moment the account does
+    // -- requireActiveSubscription and GET /subscription can then assume a
+    // row is there instead of having to special-case "no row yet".
     const user = await prisma.user.create({
-      data: { email, passwordHash, name: stripHtml(name) },
+      data: {
+        email,
+        passwordHash,
+        name: stripHtml(name),
+        subscription: { create: {} },
+      },
     });
 
     const token = await issueTokenPair(res, user);

@@ -29,6 +29,8 @@ model User {
   inventoryCategories InventoryCategory[]
   shopSettings       ShopSettings?
   refreshTokens      RefreshToken[]
+  subscription       Subscription?
+  webhookEvents      WebhookEvent[]
 
   @@map("users")
 }
@@ -340,4 +342,79 @@ model ShopSettings {
   updatedAt DateTime @updatedAt
 
   @@map("shop_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Billing status for the mechanic's account (Lemon Squeezy is the merchant
+// of record). One row per User, created at registration with
+// status "pending_checkout" before any Lemon Squeezy subscription exists.
+//
+// `status` deliberately stores Lemon Squeezy's own status string verbatim
+// (on_trial, active, past_due, unpaid, cancelled, expired, paused) rather
+// than a translated Prisma enum -- a webhook handler that has to map LS's
+// wording to a different enum is exactly the kind of translation layer that
+// silently drifts out of sync the day LS adds or renames a status.
+// ---------------------------------------------------------------------------
+model Subscription {
+  id         String @id @default(uuid())
+  mechanicId String @unique
+  mechanic   User   @relation(fields: [mechanicId], references: [id], onDelete: Cascade)
+
+  status String @default("pending_checkout")
+
+  lemonsqueezyCustomerId     String?
+  lemonsqueezySubscriptionId String? @unique
+
+  trialEndsAt DateTime?
+  // Next billing date while active (LS's `renews_at`); effective end date
+  // once cancelled (LS's `ends_at`, still-active-until-then).
+  renewsAt    DateTime?
+  endsAt      DateTime?
+
+  // Display-only, for a future "Visa •••• 4242" line in Settings -- never
+  // enough to charge anything, LS holds the actual payment method.
+  cardBrand    String?
+  cardLastFour String?
+
+  // Lets support grant access without a real Lemon Squeezy subscription
+  // (comped accounts, local dev/testing). The route-protection middleware
+  // checks this before falling back to `status`.
+  manualOverride Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// ---------------------------------------------------------------------------
+// Raw audit log of every Lemon Squeezy webhook delivery, keyed for
+// idempotency. Lemon Squeezy doesn't hand back a stable event id in the
+// payload, so `eventId` is a sha256 hash of the exact raw request body --
+// LS resends a byte-identical body on retry, so the hash naturally dedupes
+// retries without depending on any particular field being present.
+//
+// Kept indefinitely, not purged once processed: the first time a mechanic
+// disputes "I paid and don't have access," this is what you check.
+// ---------------------------------------------------------------------------
+model WebhookEvent {
+  id        String @id @default(uuid())
+  eventId   String @unique
+  eventName String
+  payload   Json
+
+  // Resolved from the checkout's custom_data once the payload is parsed;
+  // null if that lookup fails (bad/missing custom_data), so the raw event
+  // is still captured instead of being dropped for lack of somewhere to file it.
+  mechanicId String?
+  mechanic   User?   @relation(fields: [mechanicId], references: [id], onDelete: SetNull)
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  // Set when processing throws, so failed events can be found and retried
+  // deliberately instead of only ever surfacing in a log line.
+  processingError String?
+
+  @@index([mechanicId])
+  @@map("webhook_events")
 }

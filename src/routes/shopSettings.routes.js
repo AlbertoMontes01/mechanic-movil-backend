@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { requireAuth } from '../middleware/auth.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeShopSettings } from '../lib/serialize.js';
@@ -13,6 +14,7 @@ import { detectImageType } from '../lib/imageValidation.js';
 
 const router = Router();
 router.use(requireAuth);
+router.use(requireActiveSubscription);
 
 const LOGO_DIR = path.join(process.cwd(), 'uploads', 'logos');
 fs.mkdirSync(LOGO_DIR, { recursive: true });

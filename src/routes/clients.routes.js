@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireActiveSubscription } from '../middleware/subscription.js';
 import { handleZodError } from '../lib/zodError.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeClient } from '../lib/serialize.js';
@@ -8,6 +9,7 @@ import { sanitizeStrings } from '../lib/sanitize.js';
 
 const router = Router();
 router.use(requireAuth);
+router.use(requireActiveSubscription);
 
 const clientSchema = z.object({
   name: z.string().min(1),
