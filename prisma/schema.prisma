@@ -31,6 +31,7 @@ model User {
   refreshTokens      RefreshToken[]
   subscription       Subscription?
   webhookEvents      WebhookEvent[]
+  testimonial        Testimonial?
 
   @@map("users")
 }
@@ -417,4 +418,26 @@ model WebhookEvent {
 
   @@index([mechanicId])
   @@map("webhook_events")
+}
+
+// One per mechanic (like ShopSettings) -- submitted from Settings, shown on
+// the public landing page carousel. `published` defaults true (no
+// moderation queue yet, this is a pre-launch app with a handful of users);
+// revisit before this scales to a public signup flow with strangers.
+model Testimonial {
+  id         String @id @default(uuid())
+  mechanicId String @unique
+  mechanic   User   @relation(fields: [mechanicId], references: [id], onDelete: Cascade)
+
+  rating  Int     @default(5)
+  comment String
+  // Display name shown on the landing page -- deliberately separate from
+  // the account's real name/email, which are never public.
+  authorName String?
+  published  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("testimonials")
 }

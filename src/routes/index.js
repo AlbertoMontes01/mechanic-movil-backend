@@ -9,6 +9,8 @@ import shopSettingsRoutes from './shopSettings.routes.js';
 import checkoutRoutes from './checkout.routes.js';
 import subscriptionRoutes from './subscription.routes.js';
 import webhooksRoutes from './webhooks.routes.js';
+import testimonialsRoutes from './testimonials.routes.js';
+import statsRoutes from './stats.routes.js';
 
 const router = Router();
 
@@ -21,6 +23,9 @@ router.use('/webhooks', webhooksRoutes);
 // both routes exist specifically for accounts that don't have one yet.
 router.use('/checkout', checkoutRoutes);
 router.use('/subscription', subscriptionRoutes);
+// Both mixed public/private internally (see each file) -- not gated here.
+router.use('/testimonials', testimonialsRoutes);
+router.use('/stats', statsRoutes);
 
 router.use('/clients', clientsRoutes);
 router.use('/vehicles', vehiclesRoutes);
