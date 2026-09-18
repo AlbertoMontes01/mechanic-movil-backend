@@ -11,6 +11,7 @@ import subscriptionRoutes from './subscription.routes.js';
 import webhooksRoutes from './webhooks.routes.js';
 import testimonialsRoutes from './testimonials.routes.js';
 import statsRoutes from './stats.routes.js';
+import surveyRoutes from './survey.routes.js';
 
 const router = Router();
 
@@ -26,6 +27,9 @@ router.use('/subscription', subscriptionRoutes);
 // Both mixed public/private internally (see each file) -- not gated here.
 router.use('/testimonials', testimonialsRoutes);
 router.use('/stats', statsRoutes);
+// Authenticated, not gated by subscription -- mandatory onboarding step for
+// every account regardless of billing state.
+router.use('/survey', surveyRoutes);
 
 router.use('/clients', clientsRoutes);
 router.use('/vehicles', vehiclesRoutes);

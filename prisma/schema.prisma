@@ -32,6 +32,7 @@ model User {
   subscription       Subscription?
   webhookEvents      WebhookEvent[]
   testimonial        Testimonial?
+  surveyResponse     SurveyResponse?
 
   @@map("users")
 }
@@ -440,4 +441,41 @@ model Testimonial {
   updatedAt DateTime @updatedAt
 
   @@map("testimonials")
+}
+
+// One per mechanic, filled out once as a mandatory onboarding step (shown
+// on first dashboard visit after registration/checkout, and on every page
+// after that until answered -- see Layout.jsx). The row's mere existence
+// IS the "has this account answered yet" flag; no separate boolean needed.
+// Checkbox-style questions are stored as String[] (Postgres native array),
+// single-choice range questions (years/age/operation size) as a plain
+// String.
+model SurveyResponse {
+  id         String @id @default(uuid())
+  mechanicId String @unique
+  mechanic   User   @relation(fields: [mechanicId], references: [id], onDelete: Cascade)
+
+  location String
+
+  roles     String[]
+  roleOther String?
+
+  worksOn      String[]
+  worksOnOther String?
+
+  howYouWork      String[]
+  howYouWorkOther String?
+
+  yearsExperience String
+  ageRange        String
+  operationSize   String
+
+  whatKeepsRunning String[]
+
+  trackingMethods      String[]
+  trackingMethodsOther String?
+
+  createdAt DateTime @default(now())
+
+  @@map("survey_responses")
 }
