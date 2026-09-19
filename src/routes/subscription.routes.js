@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { isEnforcedForMechanic } from '../middleware/subscription.js';
 import { prisma } from '../lib/prisma.js';
+import { getSubscriptionUrls } from '../lib/lemonSqueezy.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -27,6 +28,23 @@ router.get('/', async (req, res, next) => {
       card_brand: subscription?.cardBrand || null,
       card_last_four: subscription?.cardLastFour || null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Signed link to Lemon Squeezy's customer portal, where the user updates
+// their card, sees invoices and cancels. Also outside the paywall on
+// purpose: a past_due user who is locked out needs it to fix their card.
+router.get('/portal', async (req, res, next) => {
+  try {
+    const subscription = await prisma.subscription.findUnique({ where: { mechanicId: req.mechanicId } });
+    if (!subscription?.lemonsqueezySubscriptionId) {
+      return res.status(404).json({ error: 'no_subscription' });
+    }
+    const { customerPortal } = await getSubscriptionUrls(subscription.lemonsqueezySubscriptionId);
+    if (!customerPortal) return res.status(502).json({ error: 'portal_unavailable' });
+    res.json({ url: customerPortal });
   } catch (err) {
     next(err);
   }

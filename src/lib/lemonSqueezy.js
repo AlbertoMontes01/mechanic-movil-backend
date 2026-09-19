@@ -51,6 +51,21 @@ export async function createCheckout({ email, mechanicId }) {
 
 // Constant-time comparison -- a timing-dependent compare would let an
 // attacker recover the correct signature one byte at a time.
+// The signed customer-portal links for one subscription (update card, view
+// invoices, cancel). LS signs them per request and they expire (~24h), so
+// they're fetched on demand rather than stored.
+export async function getSubscriptionUrls(lemonsqueezySubscriptionId) {
+  const res = await fetch(`${API_BASE}/subscriptions/${encodeURIComponent(lemonsqueezySubscriptionId)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Lemon Squeezy subscription lookup failed (${res.status}): ${body}`);
+  }
+  const { urls } = (await res.json()).data.attributes;
+  return { customerPortal: urls?.customer_portal, updatePaymentMethod: urls?.update_payment_method };
+}
+
 export function isValidWebhookSignature(rawBody, signatureHeader) {
   if (!rawBody || !signatureHeader) return false;
 
