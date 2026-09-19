@@ -53,3 +53,25 @@ describe('POST /api/webhooks/lemonsqueezy', () => {
     assert.equal(row.mechanicId, null);
   });
 });
+
+describe('subscription_payment_success (invoice payload)', () => {
+  test('does not overwrite the subscription row with the invoice', async () => {
+    const email = `wh-invoice-${Date.now()}@test.internal`;
+    const user = await prisma.user.create({ data: { email, passwordHash: 'x', name: 'WH' } });
+    try {
+      await prisma.subscription.create({
+        data: { mechanicId: user.id, status: 'on_trial', lemonsqueezySubscriptionId: '111' },
+      });
+      const res = await send({
+        meta: { event_name: 'subscription_payment_success', custom_data: { mechanic_id: user.id }, nonce: randomUUID() },
+        data: { type: 'subscription-invoices', id: '999', attributes: { status: 'paid', subscription_id: 111 } },
+      });
+      assert.equal(res.status, 200);
+      const sub = await prisma.subscription.findUnique({ where: { mechanicId: user.id } });
+      assert.equal(sub.status, 'on_trial');
+      assert.equal(sub.lemonsqueezySubscriptionId, '111');
+    } finally {
+      await prisma.user.delete({ where: { id: user.id } });
+    }
+  });
+});

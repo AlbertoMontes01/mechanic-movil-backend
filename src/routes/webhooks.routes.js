@@ -10,6 +10,13 @@ const router = Router();
 // always overwrites our row with what's in the payload rather than trying
 // to apply a delta -- that's what makes it safe to process out of order or
 // twice.
+//
+// subscription_payment_* are deliberately NOT here: their data is a
+// subscription-invoice (type "subscription-invoices", data.id = the invoice
+// id, attributes.status = "paid"), not the subscription. Applying one
+// overwrote the row with the invoice id and status "paid" (seen in the
+// first real checkout). LS also sends a subscription_updated with the real
+// state alongside each payment event, so recording them is enough.
 const SUBSCRIPTION_STATE_EVENTS = new Set([
   'subscription_created',
   'subscription_updated',
@@ -18,7 +25,6 @@ const SUBSCRIPTION_STATE_EVENTS = new Set([
   'subscription_expired',
   'subscription_paused',
   'subscription_unpaused',
-  'subscription_payment_success',
 ]);
 
 router.post('/lemonsqueezy', async (req, res, next) => {
@@ -95,6 +101,11 @@ async function applyEvent(eventName, payload, mechanicId) {
 
   if (!mechanicId) {
     throw new Error(`${eventName} arrived with no mechanic_id in custom_data -- cannot link to a user`);
+  }
+
+  // Belt and braces: never write a non-subscription object onto the row.
+  if (payload?.data?.type !== 'subscriptions') {
+    throw new Error(`${eventName} carried data.type "${payload?.data?.type}", expected "subscriptions"`);
   }
 
   const attrs = payload?.data?.attributes || {};
