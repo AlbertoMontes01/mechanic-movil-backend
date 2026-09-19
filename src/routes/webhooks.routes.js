@@ -33,16 +33,42 @@ router.post('/lemonsqueezy', async (req, res, next) => {
     // this hash is what makes re-processing the same event a no-op.
     const eventId = createHash('sha256').update(req.rawBody).digest('hex');
     const eventName = req.body?.meta?.event_name;
-    const mechanicId = req.body?.meta?.custom_data?.mechanic_id || null;
+    const claimedMechanicId = req.body?.meta?.custom_data?.mechanic_id || null;
 
     const existing = await prisma.webhookEvent.findUnique({ where: { eventId } });
     if (existing) {
       return res.status(200).json({ ok: true, duplicate: true });
     }
 
+    // A mechanic_id that doesn't match any user (deleted account, id from a
+    // simulated/foreign checkout) would violate the webhook_events FK, 500
+    // the request, lose the event and make LS retry it for days. Record the
+    // event unlinked with the reason instead, and ack it so LS stops
+    // retrying; the processingError makes it show up for review.
+    let mechanicId = claimedMechanicId;
+    let unlinkedReason = null;
+    if (claimedMechanicId) {
+      const user = await prisma.user.findUnique({ where: { id: claimedMechanicId }, select: { id: true } });
+      if (!user) {
+        mechanicId = null;
+        unlinkedReason = `${eventName || 'unknown'} carried mechanic_id ${claimedMechanicId}, which matches no user`;
+      }
+    }
+
     const event = await prisma.webhookEvent.create({
-      data: { eventId, eventName: eventName || 'unknown', payload: req.body, mechanicId },
+      data: {
+        eventId,
+        eventName: eventName || 'unknown',
+        payload: req.body,
+        mechanicId,
+        ...(unlinkedReason && { processingError: unlinkedReason }),
+      },
     });
+
+    if (unlinkedReason) {
+      console.error(`[webhook] ${unlinkedReason}`);
+      return res.status(200).json({ ok: true, unlinked: true });
+    }
 
     try {
       await applyEvent(eventName, req.body, mechanicId);
