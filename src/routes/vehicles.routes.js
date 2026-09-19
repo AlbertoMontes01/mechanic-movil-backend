@@ -24,6 +24,7 @@ const vehicleSchema = z.object({
   plate: z.string().optional().nullable(),
   odometer: z.number().optional().nullable(),
   engine_hours: z.number().optional().nullable(),
+  engine_serial: z.string().max(100).optional().nullable(),
   common_parts: z
     .array(
       z.object({
@@ -101,6 +102,7 @@ router.post('/', async (req, res, next) => {
         plate: data.plate || null,
         odometer: data.odometer ?? null,
         engineHours: data.engine_hours ?? null,
+        engineSerial: data.engine_serial || null,
         commonParts: data.common_parts?.length
           ? {
               create: data.common_parts.map((p, i) => ({
@@ -151,6 +153,7 @@ router.patch('/:id', async (req, res, next) => {
           ...(data.plate !== undefined && { plate: data.plate || null }),
           ...(data.odometer !== undefined && { odometer: data.odometer }),
           ...(data.engine_hours !== undefined && { engineHours: data.engine_hours }),
+          ...(data.engine_serial !== undefined && { engineSerial: data.engine_serial || null }),
           ...(data.common_parts && {
             commonParts: {
               create: data.common_parts.map((p, i) => ({

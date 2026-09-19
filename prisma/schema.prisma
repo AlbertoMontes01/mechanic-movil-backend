@@ -101,6 +101,10 @@ model Vehicle {
   plate        String?
   odometer     Int?
   engineHours  Float?
+  // Only collected for vehicleType Truck (the form hides it otherwise) --
+  // stored as a plain nullable column rather than gated here, so switching
+  // a vehicle's type never risks a constraint error.
+  engineSerial String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

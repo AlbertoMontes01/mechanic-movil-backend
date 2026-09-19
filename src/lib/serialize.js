@@ -33,6 +33,7 @@ export function serializeVehicle(v) {
     plate: v.plate,
     odometer: v.odometer,
     engine_hours: v.engineHours,
+    engine_serial: v.engineSerial,
     common_parts: (v.commonParts || [])
       .sort((a, b) => a.position - b.position)
       .map((p) => ({ name: p.name, value: p.value, inventory_item_id: p.inventoryItemId })),
