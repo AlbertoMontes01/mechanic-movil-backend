@@ -75,3 +75,67 @@ describe('subscription_payment_success (invoice payload)', () => {
     }
   });
 });
+
+describe('two LS subscriptions for one mechanic', () => {
+  let user;
+  before(async () => {
+    user = await prisma.user.create({ data: { email: `wh-dup-${Date.now()}@test.internal`, passwordHash: 'x', name: 'WH' } });
+  });
+  after(async () => {
+    await prisma.user.delete({ where: { id: user.id } });
+  });
+
+  const subEvent = (name, id, status, extra = {}) => ({
+    meta: { event_name: name, custom_data: { mechanic_id: user.id }, nonce: randomUUID() },
+    data: { type: 'subscriptions', id, attributes: { status, customer_id: 7, ...extra } },
+  });
+  const row = () => prisma.subscription.findUnique({ where: { mechanicId: user.id } });
+
+  test('first subscription is adopted; a dead second one cannot overwrite the live one', async () => {
+    let res = await send(subEvent('subscription_created', '100', 'active'));
+    assert.equal(res.status, 200);
+    assert.equal((await row()).lemonsqueezySubscriptionId, '100');
+
+    // an old/duplicate subscription gets cancelled and expires
+    res = await send(subEvent('subscription_expired', '200', 'expired', { ends_at: '2026-01-01T00:00:00Z' }));
+    assert.equal(res.status, 200);
+    const after = await row();
+    assert.equal(after.status, 'active');
+    assert.equal(after.lemonsqueezySubscriptionId, '100');
+
+    const ev = await prisma.webhookEvent.findFirst({
+      where: { mechanicId: user.id, eventName: 'subscription_expired' },
+    });
+    assert.match(ev.processingError, /Possible duplicate subscription/);
+    assert.ok(ev.processedAt);
+  });
+
+  test('once the tracked subscription is dead, a new one takes over the row', async () => {
+    await prisma.subscription.update({ where: { mechanicId: user.id }, data: { status: 'expired' } });
+    const res = await send(subEvent('subscription_created', '300', 'on_trial'));
+    assert.equal(res.status, 200);
+    const after = await row();
+    assert.equal(after.lemonsqueezySubscriptionId, '300');
+    assert.equal(after.status, 'on_trial');
+  });
+});
+
+describe('POST /api/checkout guard', () => {
+  test('409 already_subscribed while a subscription is live, no LS call made', async () => {
+    const email = `wh-checkout-${Date.now()}@test.internal`;
+    const reg = await request(app).post('/api/auth/register').send({ email, password: 'password123', name: 'WH' });
+    assert.equal(reg.status, 201);
+    const userId = reg.body.user.id;
+    try {
+      await prisma.subscription.update({
+        where: { mechanicId: userId },
+        data: { status: 'on_trial', lemonsqueezySubscriptionId: '555', trialEndsAt: new Date(Date.now() + 864e5) },
+      });
+      const res = await request(app).post('/api/checkout').set('Authorization', `Bearer ${reg.body.token}`);
+      assert.equal(res.status, 409);
+      assert.equal(res.body.error, 'already_subscribed');
+    } finally {
+      await prisma.user.delete({ where: { id: userId } });
+    }
+  });
+});

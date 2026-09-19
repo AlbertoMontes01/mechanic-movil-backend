@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createHash } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { isValidWebhookSignature } from '../lib/lemonSqueezy.js';
+import { isLiveSubscription } from '../lib/subscriptionState.js';
 
 const router = Router();
 
@@ -77,8 +78,14 @@ router.post('/lemonsqueezy', async (req, res, next) => {
     }
 
     try {
-      await applyEvent(eventName, req.body, mechanicId);
-      await prisma.webhookEvent.update({ where: { id: event.id }, data: { processedAt: new Date() } });
+      const note = await applyEvent(eventName, req.body, mechanicId);
+      // note = the event was understood but deliberately not applied (see
+      // below). Kept in processingError so it shows up in the same place as
+      // real failures, without a 500 that would make LS retry it.
+      await prisma.webhookEvent.update({
+        where: { id: event.id },
+        data: { processedAt: new Date(), ...(note && { processingError: note }) },
+      });
     } catch (err) {
       await prisma.webhookEvent.update({ where: { id: event.id }, data: { processingError: err.message } });
       throw err;
@@ -122,6 +129,25 @@ async function applyEvent(eventName, payload, mechanicId) {
     cardLastFour: attrs.card_last_four || null,
   };
 
+  // Same mechanic, different LS subscription than the one we track. Happens
+  // when someone ends up with two subscriptions (two checkouts) and one of
+  // them is cancelled/expired: applying that event would overwrite the row
+  // of the healthy one and lock the account out although it's paid up
+  // (seen in the first real cancel test). While the tracked subscription is
+  // still alive it wins, and this event is only flagged for review. Once it
+  // is dead (or there's none yet) a new subscription takes over the row.
+  const current = await prisma.subscription.findUnique({ where: { mechanicId } });
+  if (
+    current?.lemonsqueezySubscriptionId &&
+    current.lemonsqueezySubscriptionId !== lemonsqueezySubscriptionId &&
+    isLiveSubscription(current)
+  ) {
+    return (
+      `${eventName} is for subscription ${lemonsqueezySubscriptionId} but this account is tracked on ` +
+      `${current.lemonsqueezySubscriptionId} (${current.status}); not applied. Possible duplicate subscription.`
+    );
+  }
+
   // upsert, not update: covers the (should-be-rare) case where a
   // Subscription row is missing for this mechanic -- a webhook arriving
   // out of order, or an account created before this feature existed --
@@ -131,6 +157,7 @@ async function applyEvent(eventName, payload, mechanicId) {
     update: fields,
     create: { mechanicId, ...fields },
   });
+  return null;
 }
 
 export default router;

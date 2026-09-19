@@ -1,10 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-
-// Lemon Squeezy statuses that mean "this account can use the app". Anything
-// else -- past_due, unpaid, cancelled, expired, paused, or our own
-// pending_checkout before the first webhook ever lands -- falls through to
-// the 402 below.
-const ACTIVE_STATUSES = new Set(['on_trial', 'active']);
+import { hasAccess } from '../lib/subscriptionState.js';
 
 // Global kill switch, off by default: lets the billing routes and webhook go
 // live in production and be tested for real (real checkout, real webhook
@@ -41,17 +36,9 @@ export async function requireActiveSubscription(req, res, next) {
 
     const subscription = await prisma.subscription.findUnique({ where: { mechanicId: req.mechanicId } });
 
-    if (subscription?.manualOverride) return next();
-
-    // on_trial only counts while the trial hasn't actually elapsed --
-    // covers the gap between the trial ending and Lemon Squeezy's own
-    // subscription_updated -> past_due webhook arriving to update this row.
-    const trialExpired =
-      subscription?.status === 'on_trial' && subscription.trialEndsAt && subscription.trialEndsAt < new Date();
-
-    if (subscription && !trialExpired && ACTIVE_STATUSES.has(subscription.status)) {
-      return next();
-    }
+    // hasAccess covers manualOverride, active, an unexpired on_trial, and
+    // cancelled-but-paid-through (endsAt still in the future).
+    if (hasAccess(subscription)) return next();
 
     return res.status(402).json({ error: 'subscription_required', status: subscription?.status || 'none' });
   } catch (err) {
