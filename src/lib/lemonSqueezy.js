@@ -95,12 +95,22 @@ export async function cancelSubscription(lemonsqueezySubscriptionId) {
   return (await res.json()).data;
 }
 
-export async function resumeSubscription(lemonsqueezySubscriptionId) {
+// LS re-validates the stored trial_ends_at on every subscription update and
+// rejects the request with a 422 if it is already in the past -- which it
+// always is once a trial has run out. Sending trial_ends_at: null clears
+// that stale value so the resume goes through. Only done when the trial
+// really has elapsed: on a subscription cancelled *during* its trial that
+// same null would end the trial early.
+export async function resumeSubscription(lemonsqueezySubscriptionId, { trialElapsed = false } = {}) {
   const res = await fetch(`${API_BASE}/subscriptions/${encodeURIComponent(lemonsqueezySubscriptionId)}`, {
     method: 'PATCH',
     headers: authHeaders(),
     body: JSON.stringify({
-      data: { type: 'subscriptions', id: String(lemonsqueezySubscriptionId), attributes: { cancelled: false } },
+      data: {
+        type: 'subscriptions',
+        id: String(lemonsqueezySubscriptionId),
+        attributes: { cancelled: false, ...(trialElapsed && { trial_ends_at: null }) },
+      },
     }),
   });
   if (!res.ok) throw new Error(`Lemon Squeezy resume failed (${res.status}): ${await res.text()}`);

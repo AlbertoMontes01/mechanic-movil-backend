@@ -77,6 +77,32 @@ describe('POST /api/subscription/cancel and /resume', () => {
     fetchMock.mock.restore();
   });
 
+  test('resume clears a stale trial_ends_at only when the trial has elapsed', async () => {
+    const day = 864e5;
+    // trial already over -> null is sent (otherwise LS answers 422)
+    await setRow({ status: 'cancelled', endsAt: new Date(Date.now() + day), trialEndsAt: new Date(Date.now() - day) });
+    let fetchMock = mock.method(globalThis, 'fetch', async () => lsResponse('active'));
+    await authed(request(app).post('/api/subscription/resume'));
+    assert.equal(JSON.parse(fetchMock.mock.calls[0].arguments[1].body).data.attributes.trial_ends_at, null);
+    fetchMock.mock.restore();
+
+    // cancelled mid-trial -> must NOT send it, or the trial would end early
+    await setRow({ status: 'cancelled', endsAt: new Date(Date.now() + day), trialEndsAt: new Date(Date.now() + 10 * day) });
+    fetchMock = mock.method(globalThis, 'fetch', async () => lsResponse('on_trial'));
+    await authed(request(app).post('/api/subscription/resume'));
+    assert.equal('trial_ends_at' in JSON.parse(fetchMock.mock.calls[0].arguments[1].body).data.attributes, false);
+    fetchMock.mock.restore();
+  });
+
+  test('a Lemon Squeezy failure is a 502 with a readable message, not a bare 500', async () => {
+    await setRow({ status: 'cancelled', endsAt: new Date(Date.now() + 864e5), trialEndsAt: null });
+    const fetchMock = mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 422, text: async () => 'nope' }));
+    const res = await authed(request(app).post('/api/subscription/resume'));
+    assert.equal(res.status, 502);
+    assert.match(res.body.error, /could not update your subscription/i);
+    fetchMock.mock.restore();
+  });
+
   test('resume is refused once the paid period is over', async () => {
     await setRow({ status: 'cancelled', endsAt: new Date(Date.now() - 864e5) });
     const fetchMock = mock.method(globalThis, 'fetch', async () => lsResponse('active'));

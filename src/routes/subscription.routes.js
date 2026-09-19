@@ -61,7 +61,14 @@ async function changeSubscription(req, res, next, { allowed, action }) {
     if (!sub?.lemonsqueezySubscriptionId) return res.status(404).json({ error: 'no_subscription' });
     if (!allowed(sub)) return res.status(409).json({ error: 'invalid_state', status: sub.status });
 
-    const data = await action(sub.lemonsqueezySubscriptionId);
+    let data;
+    try {
+      data = await action(sub);
+    } catch (err) {
+      // LS refused or was unreachable: log the detail, tell the user something usable.
+      console.error(err);
+      return res.status(502).json({ error: 'We could not update your subscription with our payment provider. Please try again in a moment or contact support.' });
+    }
     const fields = subscriptionFieldsFromLS(data);
     await prisma.subscription.update({ where: { mechanicId: req.mechanicId }, data: fields });
     res.json({
@@ -78,14 +85,17 @@ async function changeSubscription(req, res, next, { allowed, action }) {
 router.post('/cancel', (req, res, next) =>
   changeSubscription(req, res, next, {
     allowed: (sub) => isLiveSubscription(sub) && sub.status !== 'cancelled',
-    action: cancelSubscription,
+    action: (sub) => cancelSubscription(sub.lemonsqueezySubscriptionId),
   })
 );
 
 router.post('/resume', (req, res, next) =>
   changeSubscription(req, res, next, {
     allowed: (sub) => sub.status === 'cancelled' && sub.endsAt && sub.endsAt > new Date(),
-    action: resumeSubscription,
+    action: (sub) =>
+      resumeSubscription(sub.lemonsqueezySubscriptionId, {
+        trialElapsed: Boolean(sub.trialEndsAt && sub.trialEndsAt < new Date()),
+      }),
   })
 );
 
