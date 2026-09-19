@@ -66,6 +66,47 @@ export async function getSubscriptionUrls(lemonsqueezySubscriptionId) {
   return { customerPortal: urls?.customer_portal, updatePaymentMethod: urls?.update_payment_method };
 }
 
+// Maps a Lemon Squeezy `subscriptions` object (webhook data, or an API
+// response) onto our Subscription columns. One place, so a webhook and an
+// in-app cancel/resume can never disagree about what a field means.
+export function subscriptionFieldsFromLS(data) {
+  const attrs = data?.attributes || {};
+  return {
+    status: attrs.status,
+    lemonsqueezySubscriptionId: data?.id ? String(data.id) : null,
+    lemonsqueezyCustomerId: attrs.customer_id != null ? String(attrs.customer_id) : null,
+    trialEndsAt: attrs.trial_ends_at ? new Date(attrs.trial_ends_at) : null,
+    renewsAt: attrs.renews_at ? new Date(attrs.renews_at) : null,
+    endsAt: attrs.ends_at ? new Date(attrs.ends_at) : null,
+    cardBrand: attrs.card_brand || null,
+    cardLastFour: attrs.card_last_four || null,
+  };
+}
+
+// Cancel = LS DELETE (access continues until the period ends; LS then
+// sends subscription_cancelled). Resume = PATCH cancelled:false, allowed
+// only before ends_at. Both return the updated subscription object.
+export async function cancelSubscription(lemonsqueezySubscriptionId) {
+  const res = await fetch(`${API_BASE}/subscriptions/${encodeURIComponent(lemonsqueezySubscriptionId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Lemon Squeezy cancel failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).data;
+}
+
+export async function resumeSubscription(lemonsqueezySubscriptionId) {
+  const res = await fetch(`${API_BASE}/subscriptions/${encodeURIComponent(lemonsqueezySubscriptionId)}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      data: { type: 'subscriptions', id: String(lemonsqueezySubscriptionId), attributes: { cancelled: false } },
+    }),
+  });
+  if (!res.ok) throw new Error(`Lemon Squeezy resume failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).data;
+}
+
 export function isValidWebhookSignature(rawBody, signatureHeader) {
   if (!rawBody || !signatureHeader) return false;
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createHash } from 'crypto';
 import { prisma } from '../lib/prisma.js';
-import { isValidWebhookSignature } from '../lib/lemonSqueezy.js';
+import { isValidWebhookSignature, subscriptionFieldsFromLS } from '../lib/lemonSqueezy.js';
 import { isLiveSubscription } from '../lib/subscriptionState.js';
 
 const router = Router();
@@ -115,19 +115,8 @@ async function applyEvent(eventName, payload, mechanicId) {
     throw new Error(`${eventName} carried data.type "${payload?.data?.type}", expected "subscriptions"`);
   }
 
-  const attrs = payload?.data?.attributes || {};
-  const lemonsqueezySubscriptionId = payload?.data?.id ? String(payload.data.id) : null;
-
-  const fields = {
-    status: attrs.status,
-    lemonsqueezySubscriptionId,
-    lemonsqueezyCustomerId: attrs.customer_id != null ? String(attrs.customer_id) : null,
-    trialEndsAt: attrs.trial_ends_at ? new Date(attrs.trial_ends_at) : null,
-    renewsAt: attrs.renews_at ? new Date(attrs.renews_at) : null,
-    endsAt: attrs.ends_at ? new Date(attrs.ends_at) : null,
-    cardBrand: attrs.card_brand || null,
-    cardLastFour: attrs.card_last_four || null,
-  };
+  const fields = subscriptionFieldsFromLS(payload.data);
+  const lemonsqueezySubscriptionId = fields.lemonsqueezySubscriptionId;
 
   // Same mechanic, different LS subscription than the one we track. Happens
   // when someone ends up with two subscriptions (two checkouts) and one of

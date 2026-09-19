@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { isEnforcedForMechanic } from '../middleware/subscription.js';
 import { prisma } from '../lib/prisma.js';
-import { getSubscriptionUrls } from '../lib/lemonSqueezy.js';
+import { getSubscriptionUrls, cancelSubscription, resumeSubscription, subscriptionFieldsFromLS } from '../lib/lemonSqueezy.js';
+import { isLiveSubscription } from '../lib/subscriptionState.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -49,5 +50,43 @@ router.get('/portal', async (req, res, next) => {
     next(err);
   }
 });
+
+// In-app cancel / resume. Works on the tracked subscription only. The row
+// is updated straight from LS's response so the UI is right immediately;
+// the webhooks that follow carry the same state, and since the handler
+// overwrites with the full payload they're harmless repeats.
+async function changeSubscription(req, res, next, { allowed, action }) {
+  try {
+    const sub = await prisma.subscription.findUnique({ where: { mechanicId: req.mechanicId } });
+    if (!sub?.lemonsqueezySubscriptionId) return res.status(404).json({ error: 'no_subscription' });
+    if (!allowed(sub)) return res.status(409).json({ error: 'invalid_state', status: sub.status });
+
+    const data = await action(sub.lemonsqueezySubscriptionId);
+    const fields = subscriptionFieldsFromLS(data);
+    await prisma.subscription.update({ where: { mechanicId: req.mechanicId }, data: fields });
+    res.json({
+      status: fields.status,
+      trial_ends_at: fields.trialEndsAt,
+      renews_at: fields.renewsAt,
+      ends_at: fields.endsAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+router.post('/cancel', (req, res, next) =>
+  changeSubscription(req, res, next, {
+    allowed: (sub) => isLiveSubscription(sub) && sub.status !== 'cancelled',
+    action: cancelSubscription,
+  })
+);
+
+router.post('/resume', (req, res, next) =>
+  changeSubscription(req, res, next, {
+    allowed: (sub) => sub.status === 'cancelled' && sub.endsAt && sub.endsAt > new Date(),
+    action: resumeSubscription,
+  })
+);
 
 export default router;
